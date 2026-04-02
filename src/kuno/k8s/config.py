@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from kubernetes_asyncio.config import list_kube_config_contexts
+
 from kuno.models import StartupConfig
 
 DEFAULT_NAMESPACE = "default"
@@ -12,6 +14,14 @@ ContextEntry = Mapping[str, Any]
 
 class UnknownContextError(ValueError):
     pass
+
+
+def load_startup_targets(
+    startup_config: StartupConfig,
+    config_file: str | None = None,
+) -> StartupConfig:
+    contexts, current_context = list_kube_config_contexts(config_file=config_file)
+    return resolve_startup_targets(startup_config, contexts, current_context)
 
 
 def resolve_startup_targets(
