@@ -1,13 +1,16 @@
-from contextlib import redirect_stdout
-from io import StringIO
-
-from kuno import main
+from kuno.cli import main
+from kuno.models import StartupConfig
 
 
-def test_main_prints_placeholder_message() -> None:
-    buffer = StringIO()
-    with redirect_stdout(buffer):
-        result = main([])
+def test_main_runs_app_with_startup_config(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(self) -> None:
+        captured["startup_config"] = self.startup_config
+
+    monkeypatch.setattr("kuno.app.KunoApp.run", fake_run)
+
+    result = main(["--context", "prod", "--namespace", "payments"])
 
     assert result == 0
-    assert buffer.getvalue() == "Hello from kuno!\n"
+    assert captured["startup_config"] == StartupConfig(context="prod", namespace="payments")

@@ -1,6 +1,7 @@
 import pytest
 
-from kuno.cli import StartupConfig, parse_args
+from kuno.cli import parse_args
+from kuno.models import StartupConfig
 
 
 @pytest.mark.parametrize(

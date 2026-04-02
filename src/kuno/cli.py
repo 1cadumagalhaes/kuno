@@ -2,14 +2,10 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
-from dataclasses import dataclass
 from typing import Any
 
-
-@dataclass(slots=True)
-class StartupConfig:
-    context: str | None = None
-    namespace: str | None = None
+from kuno.app import KunoApp
+from kuno.models import StartupConfig
 
 
 class StoreUniqueValue(argparse.Action):
@@ -56,6 +52,7 @@ def parse_args(argv: Sequence[str] | None = None) -> StartupConfig:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parse_args(argv)
-    print("Hello from kuno!")
+    startup_config = parse_args(argv)
+    app = KunoApp(startup_config)
+    app.run()
     return 0
