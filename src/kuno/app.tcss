@@ -1,0 +1,44 @@
+Screen {
+    layout: vertical;
+}
+
+#startup-summary {
+    border: round $accent;
+    height: auto;
+    margin: 1 1 0 1;
+    padding: 0 1;
+}
+
+#explorer {
+    height: 1fr;
+    margin: 1;
+}
+
+#pod-panel {
+    border: round $accent;
+    height: 1fr;
+    margin-right: 1;
+    width: 2fr;
+}
+
+#details-panel {
+    border: round $accent;
+    height: 1fr;
+    width: 1fr;
+}
+
+.panel-title {
+    background: $accent;
+    color: $text;
+    padding: 0 1;
+    text-style: bold;
+}
+
+#pod-table {
+    height: 1fr;
+}
+
+#pod-details {
+    height: 1fr;
+    padding: 1;
+}

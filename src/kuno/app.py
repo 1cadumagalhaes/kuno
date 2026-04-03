@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from textual import work
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
 from textual.widgets import DataTable, Static
 
 from kuno.k8s.client import KubeClient
@@ -12,6 +12,8 @@ from kuno.models import PodSummary, StartupConfig
 
 
 class KunoApp(App[None]):
+    CSS_PATH = "app.tcss"
+
     def __init__(self, startup_config: StartupConfig) -> None:
         super().__init__()
         self.startup_config = startup_config
@@ -20,9 +22,13 @@ class KunoApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Static(self._summary_text(), id="startup-summary")
-        with Horizontal():
-            yield DataTable(id="pod-table")
-            yield Static("pod\n(loading)", id="pod-details")
+        with Horizontal(id="explorer"):
+            with Vertical(id="pod-panel"):
+                yield Static("Pods", classes="panel-title")
+                yield DataTable(id="pod-table")
+            with Vertical(id="details-panel"):
+                yield Static("Details", classes="panel-title")
+                yield Static("pod\n(loading)", id="pod-details")
 
     def on_mount(self) -> None:
         summary = self.query_one("#startup-summary", Static)
