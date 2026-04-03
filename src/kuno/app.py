@@ -40,16 +40,18 @@ class KunoApp(App[None]):
             with Vertical(id="details-panel"):
                 yield Static("Details", classes="panel-title")
                 yield Static("pod\n(loading)", id="pod-details")
-        yield Input(placeholder=": command", id="command-input")
+        with Horizontal(id="command-bar"):
+            yield Static(":", id="command-prefix")
+            yield Input(placeholder="command", id="command-input")
         yield Footer()
 
     def on_mount(self) -> None:
-        command_input = self.query_one("#command-input", Input)
+        command_bar = self.query_one("#command-bar", Horizontal)
         details_panel = self.query_one("#details-panel", Vertical)
         summary = self.query_one("#startup-summary", Static)
         pod_table = self.query_one("#pod-table", DataTable)
         pod_details = self.query_one("#pod-details", Static)
-        command_input.display = self.command_bar_visible
+        command_bar.display = self.command_bar_visible
         details_panel.display = self.details_visible
         pod_table.focus()
         pod_table.cursor_type = "row"
@@ -127,18 +129,20 @@ class KunoApp(App[None]):
             pass
 
     def action_open_command_bar(self) -> None:
+        command_bar = self.query_one("#command-bar", Horizontal)
         command_input = self.query_one("#command-input", Input)
         self.command_bar_visible = True
-        command_input.display = True
-        command_input.value = ":"
+        command_bar.display = True
+        command_input.value = ""
         command_input.focus()
 
     def action_close_command_bar(self) -> None:
         if not self.command_bar_visible:
             return
+        command_bar = self.query_one("#command-bar", Horizontal)
         command_input = self.query_one("#command-input", Input)
         self.command_bar_visible = False
-        command_input.display = False
+        command_bar.display = False
         command_input.value = ""
         self.query_one("#pod-table", DataTable).focus()
 

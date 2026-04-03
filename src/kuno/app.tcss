@@ -43,10 +43,26 @@ Screen {
     padding: 1;
 }
 
-#command-input {
-    border: round $accent;
+#command-bar {
     display: none;
     dock: bottom;
     height: 3;
     margin: 0 1 1 1;
+}
+
+#command-prefix {
+    background: $accent;
+    border: round $accent;
+    color: $text;
+    content-align: center middle;
+    height: 3;
+    min-width: 3;
+    width: 3;
+}
+
+#command-input {
+    border: round $accent;
+    height: 3;
+    margin-left: 1;
+    width: 1fr;
 }

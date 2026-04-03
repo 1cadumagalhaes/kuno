@@ -1,5 +1,5 @@
 import pytest
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.widgets import DataTable, Input, Static
 
 from kuno.app import KunoApp
@@ -250,12 +250,13 @@ async def test_app_opens_command_bar(monkeypatch) -> None:
 
     async with app.run_test() as pilot:
         await pilot.pause()
+        command_bar = app.query_one("#command-bar", Horizontal)
         command_input = app.query_one("#command-input", Input)
-        assert command_input.display is False
+        assert command_bar.display is False
         app.action_open_command_bar()
         await pilot.pause()
-        assert command_input.display is True
-        assert command_input.value == ":"
+        assert command_bar.display is True
+        assert command_input.value == ""
 
 
 @pytest.mark.asyncio
@@ -286,12 +287,13 @@ async def test_app_closes_command_bar(monkeypatch) -> None:
 
     async with app.run_test() as pilot:
         await pilot.pause()
+        command_bar = app.query_one("#command-bar", Horizontal)
         command_input = app.query_one("#command-input", Input)
         app.action_open_command_bar()
         await pilot.pause()
         app.action_close_command_bar()
         await pilot.pause()
-        assert command_input.display is False
+        assert command_bar.display is False
         assert command_input.value == ""
 
 
