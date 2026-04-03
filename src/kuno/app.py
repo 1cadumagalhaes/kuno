@@ -18,6 +18,7 @@ from kuno.models import PodSummary, StartupConfig
 
 class KunoApp(App[None]):
     CSS_PATH = "app.tcss"
+    MAX_COMMAND_SUGGESTIONS = 4
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("d", "toggle_details", "Details"),
         ("colon", "open_command_bar", "Command"),
@@ -285,8 +286,12 @@ class KunoApp(App[None]):
             suggestions.update("")
             return
 
+        start = max(0, self.command_suggestion_index - self.MAX_COMMAND_SUGGESTIONS + 1)
+        end = min(len(self.command_suggestions), start + self.MAX_COMMAND_SUGGESTIONS)
+        start = max(0, end - self.MAX_COMMAND_SUGGESTIONS)
         lines = []
-        for index, suggestion in enumerate(self.command_suggestions[:4]):
+        for index in range(start, end):
+            suggestion = self.command_suggestions[index]
             prefix = ">" if index == self.command_suggestion_index else " "
             lines.append(f"{prefix} {suggestion}")
         suggestions.update("\n".join(lines))
@@ -303,7 +308,7 @@ class KunoApp(App[None]):
         if not self.command_suggestions:
             return
         self.command_suggestion_index = (self.command_suggestion_index + direction) % len(
-            self.command_suggestions[:4]
+            self.command_suggestions
         )
         self._render_command_suggestions()
 
