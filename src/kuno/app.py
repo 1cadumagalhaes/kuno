@@ -130,6 +130,7 @@ class LogsScreen(Screen[None]):
         self.pod_name = pod_name
         self.container_name = container_name
         self.details_visible = False
+        self.rendered_log_spans: list[tuple[int, int, int]] = []
         self.selected_log_index = 0
         self.since_text = ""
         self.stream_worker = None
@@ -198,6 +199,22 @@ class LogsScreen(Screen[None]):
             self.load_logs()
             if self.follow_enabled:
                 self._start_streaming()
+
+    def on_click(self, event: events.Click) -> None:
+        output = self.query_one("#logs-output", RichLog)
+        offset = event.get_content_offset(output)
+        if offset is None:
+            return
+        line_number = int(output.scroll_offset.y) + offset.y
+        for index, start, end in self.rendered_log_spans:
+            if start <= line_number <= end:
+                if self.follow_enabled:
+                    self.follow_enabled = False
+                    self._stop_streaming()
+                    self._update_title()
+                self.selected_log_index = index
+                self._render_logs()
+                break
 
     def on_key(self, event: events.Key) -> None:
         if event.key == "down":
@@ -297,8 +314,6 @@ class LogsScreen(Screen[None]):
         output.auto_scroll = self.follow_enabled
         output.wrap = self.wrap_enabled
         lines = self._display_entries()
-        if self.wrap_enabled:
-            lines = self._wrap_lines(lines)
         if lines:
             for line in lines:
                 output.write(line)
@@ -387,12 +402,19 @@ class LogsScreen(Screen[None]):
 
     def _display_entries(self) -> list[object]:
         lines: list[object] = []
+        self.rendered_log_spans = []
+        current_line = 0
         for index in self._visible_log_indices():
-            lines.extend(
-                self._entry_renderables(
-                    self.log_lines[index], selected=index == self.selected_log_index
-                )
+            entry_lines = self._entry_renderables(
+                self.log_lines[index], selected=index == self.selected_log_index
             )
+            display_lines = self._wrap_lines(entry_lines) if self.wrap_enabled else entry_lines
+            if display_lines:
+                self.rendered_log_spans.append(
+                    (index, current_line, current_line + len(display_lines) - 1)
+                )
+                current_line += len(display_lines)
+            lines.extend(display_lines)
         return lines
 
     def _display_lines_plain(self) -> list[str]:
