@@ -37,9 +37,11 @@ class KunoApp(App[None]):
     MAX_COMMAND_SUGGESTIONS = 4
     theme = "nord"
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
+        ("a", "about", "About"),
         ("d", "toggle_details", "Details"),
         ("colon", "open_command_bar", "Command"),
         ("escape", "close_command_bar", "Close"),
+        ("r", "refresh_pods", "Refresh"),
     ]
 
     def __init__(self, startup_config: StartupConfig) -> None:
@@ -260,12 +262,18 @@ class KunoApp(App[None]):
     def _command_about(self) -> None:
         self.push_screen(AboutScreen())
 
+    def action_about(self) -> None:
+        self._command_about()
+
     def _command_pods(self) -> None:
         self.query_one("#pod-table", DataTable).focus()
 
     def _command_refresh(self) -> None:
         self.load_pods()
         self.notify("Refreshing pods")
+
+    def action_refresh_pods(self) -> None:
+        self._command_refresh()
 
     def _command_show_details(self) -> None:
         if not self.details_visible:
