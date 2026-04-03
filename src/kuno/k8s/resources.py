@@ -6,7 +6,13 @@ from typing import Any, Protocol
 
 from kubernetes_asyncio.client import AppsV1Api, CoreV1Api
 
-from kuno.models import DeploymentSummary, PodSummary, ServiceSummary, StatefulSetSummary
+from kuno.models import (
+    DeploymentSummary,
+    PodSummary,
+    PvcSummary,
+    ServiceSummary,
+    StatefulSetSummary,
+)
 
 
 class HasCoreV1(Protocol):
@@ -47,6 +53,15 @@ async def list_services(kube_client: HasCoreV1, namespace: str) -> list[ServiceS
     service_list = await kube_client.core_v1.list_namespaced_service(namespace)
     current = datetime.now(UTC)
     return [service_summary_from_api_item(item, now=current) for item in service_list.items]
+
+
+async def list_pvcs(kube_client: HasCoreV1, namespace: str) -> list[PvcSummary]:
+    if kube_client.core_v1 is None:
+        raise RuntimeError("Kubernetes client is not connected")
+
+    pvc_list = await kube_client.core_v1.list_namespaced_persistent_volume_claim(namespace)
+    current = datetime.now(UTC)
+    return [pvc_summary_from_api_item(item, now=current) for item in pvc_list.items]
 
 
 async def list_deployments(kube_client: HasAppsV1, namespace: str) -> list[DeploymentSummary]:
@@ -173,6 +188,32 @@ def service_summary_from_api_item(item: Any, now: datetime | None = None) -> Ser
     )
 
 
+def pvc_summary_from_api_item(item: Any, now: datetime | None = None) -> PvcSummary:
+    metadata = getattr(item, "metadata", None)
+    spec = getattr(item, "spec", None)
+    status = getattr(item, "status", None)
+    name = getattr(metadata, "name", None)
+    creation_timestamp = getattr(metadata, "creation_timestamp", None)
+    capacity = getattr(status, "capacity", None)
+
+    if not isinstance(name, str) or not name:
+        raise ValueError("PVC is missing a valid name")
+
+    size = "-"
+    if isinstance(capacity, dict):
+        size = string_or_default(capacity.get("storage"), "-")
+
+    return PvcSummary(
+        name=name,
+        status=string_or_default(getattr(status, "phase", None), "Unknown"),
+        volume=string_or_default(getattr(spec, "volume_name", None), "-"),
+        capacity=size,
+        access=access_modes_summary(getattr(spec, "access_modes", None)),
+        storage_class=string_or_default(getattr(spec, "storage_class_name", None), "-"),
+        age=format_age(creation_timestamp, now=now),
+    )
+
+
 def pod_ready(container_statuses: Any) -> str:
     if not isinstance(container_statuses, list) or not container_statuses:
         return "0/0"
@@ -249,6 +290,15 @@ def service_ports_summary(ports: Any) -> str:
     if not values:
         return "-"
     return truncate_for_table(",".join(values), max_length=32)
+
+
+def access_modes_summary(modes: Any) -> str:
+    if not isinstance(modes, list) or not modes:
+        return "-"
+    values = [mode for mode in modes if isinstance(mode, str) and mode]
+    if not values:
+        return "-"
+    return truncate_for_table(",".join(values), max_length=24)
 
 
 def string_or_default(value: Any, default: str) -> str:
@@ -367,4 +417,17 @@ def render_service_details(service: ServiceSummary) -> str:
         f"ports: {service.ports}\n"
         f"age: {service.age}\n"
         f"selector: {service.selector}"
+    )
+
+
+def render_pvc_details(pvc: PvcSummary) -> str:
+    return (
+        "pvc\n"
+        f"name: {pvc.name}\n"
+        f"status: {pvc.status}\n"
+        f"volume: {pvc.volume}\n"
+        f"capacity: {pvc.capacity}\n"
+        f"access: {pvc.access}\n"
+        f"storage-class: {pvc.storage_class}\n"
+        f"age: {pvc.age}"
     )

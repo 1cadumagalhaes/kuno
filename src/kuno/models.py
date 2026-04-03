@@ -25,6 +25,7 @@ class ExplorerView(StrEnum):
     DEPLOYMENTS = "deployments"
     STATEFULSETS = "statefulsets"
     SERVICES = "services"
+    PVC = "pvc"
 
 
 @dataclass(slots=True)
@@ -59,3 +60,14 @@ class ServiceSummary:
     ports: str
     age: str
     selector: str
+
+
+@dataclass(slots=True)
+class PvcSummary:
+    name: str
+    status: str
+    volume: str
+    capacity: str
+    access: str
+    storage_class: str
+    age: str

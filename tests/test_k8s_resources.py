@@ -12,19 +12,28 @@ from kuno.k8s.resources import (
     list_deployments,
     list_namespaces,
     list_pods,
+    list_pvcs,
     list_services,
     list_statefulsets,
     pod_ready,
     pod_restarts,
     pod_summary_from_api_item,
+    pvc_summary_from_api_item,
     render_pod_details,
+    render_pvc_details,
     render_service_details,
     render_statefulset_details,
     service_summary_from_api_item,
     statefulset_summary_from_api_item,
     truncate_for_table,
 )
-from kuno.models import DeploymentSummary, PodSummary, ServiceSummary, StatefulSetSummary
+from kuno.models import (
+    DeploymentSummary,
+    PodSummary,
+    PvcSummary,
+    ServiceSummary,
+    StatefulSetSummary,
+)
 
 
 def test_pod_summary_from_api_item_reads_operational_fields() -> None:
@@ -471,4 +480,82 @@ def test_render_service_details_formats_service() -> None:
             )
         )
         == "service\nname: api\ntype: ClusterIP\ncluster-ip: 10.0.0.1\nports: 80/TCP,443/TCP\nage: 1h\nselector: app=api,tier=backend"
+    )
+
+
+def test_pvc_summary_from_api_item_reads_operational_fields() -> None:
+    item = SimpleNamespace(
+        metadata=SimpleNamespace(
+            name="data-postgres-0",
+            creation_timestamp=datetime(2026, 4, 2, 11, 0, tzinfo=UTC),
+        ),
+        spec=SimpleNamespace(
+            volume_name="pvc-123",
+            access_modes=["ReadWriteOnce"],
+            storage_class_name="fast-ssd",
+        ),
+        status=SimpleNamespace(phase="Bound", capacity={"storage": "10Gi"}),
+    )
+
+    assert pvc_summary_from_api_item(
+        item, now=datetime(2026, 4, 2, 12, 0, tzinfo=UTC)
+    ) == PvcSummary(
+        name="data-postgres-0",
+        status="Bound",
+        volume="pvc-123",
+        capacity="10Gi",
+        access="ReadWriteOnce",
+        storage_class="fast-ssd",
+        age="1h",
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_pvcs_maps_api_items() -> None:
+    items = [
+        SimpleNamespace(
+            metadata=SimpleNamespace(name="data-postgres-0"),
+            spec=SimpleNamespace(
+                volume_name="pvc-123",
+                access_modes=["ReadWriteOnce"],
+                storage_class_name="fast-ssd",
+            ),
+            status=SimpleNamespace(phase="Bound", capacity={"storage": "10Gi"}),
+        )
+    ]
+
+    class FakeCoreV1:
+        async def list_namespaced_persistent_volume_claim(self, namespace: str) -> SimpleNamespace:
+            assert namespace == "payments"
+            return SimpleNamespace(items=items)
+
+    kube_client = SimpleNamespace(core_v1=FakeCoreV1())
+
+    assert await list_pvcs(kube_client, "payments") == [
+        PvcSummary(
+            name="data-postgres-0",
+            status="Bound",
+            volume="pvc-123",
+            capacity="10Gi",
+            access="ReadWriteOnce",
+            storage_class="fast-ssd",
+            age="-",
+        )
+    ]
+
+
+def test_render_pvc_details_formats_pvc() -> None:
+    assert (
+        render_pvc_details(
+            PvcSummary(
+                name="data-postgres-0",
+                status="Bound",
+                volume="pvc-123",
+                capacity="10Gi",
+                access="ReadWriteOnce",
+                storage_class="fast-ssd",
+                age="1h",
+            )
+        )
+        == "pvc\nname: data-postgres-0\nstatus: Bound\nvolume: pvc-123\ncapacity: 10Gi\naccess: ReadWriteOnce\nstorage-class: fast-ssd\nage: 1h"
     )

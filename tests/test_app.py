@@ -8,6 +8,7 @@ from kuno.models import (
     DeploymentSummary,
     ExplorerView,
     PodSummary,
+    PvcSummary,
     ServiceSummary,
     StartupConfig,
     StatefulSetSummary,
@@ -858,6 +859,146 @@ async def test_app_renders_service_details(monkeypatch) -> None:
         assert (
             pod_details.content
             == "service\nname: api\ntype: ClusterIP\ncluster-ip: 10.0.0.1\nports: 80/TCP,443/TCP\nage: 1h\nselector: app=api,tier=backend"
+        )
+
+
+@pytest.mark.asyncio
+async def test_app_switches_to_pvc_view(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
+        return []
+
+    async def fake_list_deployments(
+        kube_client: FakeKubeClient, namespace: str
+    ) -> list[DeploymentSummary]:
+        return []
+
+    async def fake_list_statefulsets(
+        kube_client: FakeKubeClient, namespace: str
+    ) -> list[StatefulSetSummary]:
+        return []
+
+    async def fake_list_services(
+        kube_client: FakeKubeClient, namespace: str
+    ) -> list[ServiceSummary]:
+        return []
+
+    async def fake_list_pvcs(kube_client: FakeKubeClient, namespace: str) -> list[PvcSummary]:
+        assert kube_client.context == "prod"
+        assert namespace == "payments"
+        return [
+            PvcSummary(
+                name="data-postgres-0",
+                status="Bound",
+                volume="pvc-123",
+                capacity="10Gi",
+                access="ReadWriteOnce",
+                storage_class="fast-ssd",
+                age="1h",
+            )
+        ]
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
+    monkeypatch.setattr("kuno.app.list_deployments", fake_list_deployments)
+    monkeypatch.setattr("kuno.app.list_statefulsets", fake_list_statefulsets)
+    monkeypatch.setattr("kuno.app.list_services", fake_list_services)
+    monkeypatch.setattr("kuno.app.list_pvcs", fake_list_pvcs)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.execute_command("pvc")
+        await pilot.pause()
+        table_title = app.query_one("#table-title", Static)
+        details_title = app.query_one("#details-title", Static)
+        pod_table = app.query_one("#pod-table", DataTable)
+        assert app.current_view is ExplorerView.PVC
+        assert table_title.content == "PVC"
+        assert details_title.content == "PVC Details"
+        assert pod_table.row_count == 1
+
+
+@pytest.mark.asyncio
+async def test_app_renders_pvc_details(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
+        return []
+
+    async def fake_list_deployments(
+        kube_client: FakeKubeClient, namespace: str
+    ) -> list[DeploymentSummary]:
+        return []
+
+    async def fake_list_statefulsets(
+        kube_client: FakeKubeClient, namespace: str
+    ) -> list[StatefulSetSummary]:
+        return []
+
+    async def fake_list_services(
+        kube_client: FakeKubeClient, namespace: str
+    ) -> list[ServiceSummary]:
+        return []
+
+    async def fake_list_pvcs(kube_client: FakeKubeClient, namespace: str) -> list[PvcSummary]:
+        return [
+            PvcSummary(
+                name="data-postgres-0",
+                status="Bound",
+                volume="pvc-123",
+                capacity="10Gi",
+                access="ReadWriteOnce",
+                storage_class="fast-ssd",
+                age="1h",
+            )
+        ]
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
+    monkeypatch.setattr("kuno.app.list_deployments", fake_list_deployments)
+    monkeypatch.setattr("kuno.app.list_statefulsets", fake_list_statefulsets)
+    monkeypatch.setattr("kuno.app.list_services", fake_list_services)
+    monkeypatch.setattr("kuno.app.list_pvcs", fake_list_pvcs)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.execute_command("pvc")
+        await pilot.pause()
+        await pilot.press("d")
+        await pilot.pause()
+        pod_details = app.query_one("#pod-details", Static)
+        assert (
+            pod_details.content
+            == "pvc\nname: data-postgres-0\nstatus: Bound\nvolume: pvc-123\ncapacity: 10Gi\naccess: ReadWriteOnce\nstorage-class: fast-ssd\nage: 1h"
         )
 
 
