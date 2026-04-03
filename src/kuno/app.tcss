@@ -90,3 +90,45 @@ Screen {
     padding: 1 2;
     width: auto;
 }
+
+LogsScreen {
+    layout: vertical;
+}
+
+#logs-title {
+    border: round $accent;
+    height: auto;
+    margin: 1 1 0 1;
+    padding: 0 1;
+}
+
+#logs-filter {
+    border: round $accent;
+    height: 3;
+    margin: 1 1 0 1;
+}
+
+#logs-output {
+    border: round $accent;
+    height: 1fr;
+    margin: 1;
+    padding: 0 1;
+}
+
+#confirm-dialog {
+    background: $panel;
+    border: round $accent;
+    height: auto;
+    margin: 8 24;
+    padding: 1 2;
+    width: auto;
+}
+
+#confirm-title {
+    text-style: bold;
+}
+
+#confirm-actions {
+    height: auto;
+    margin-top: 1;
+}

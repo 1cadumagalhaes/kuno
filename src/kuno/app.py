@@ -90,7 +90,12 @@ class ConfirmActionScreen(ModalScreen[bool]):
 
 
 class LogsScreen(Screen[None]):
-    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("escape", "close", "Back")]
+    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
+        ("escape", "close", "Back"),
+        ("slash", "focus_filter", "Filter"),
+        ("r", "reload", "Reload"),
+        ("ctrl+l", "clear_filter", "Clear Filter"),
+    ]
 
     def __init__(
         self,
@@ -102,6 +107,8 @@ class LogsScreen(Screen[None]):
     ) -> None:
         super().__init__()
         self.context = context
+        self.filter_text = ""
+        self.log_lines: list[str] = []
         self.namespace = namespace
         self.pod_name = pod_name
         self.container_name = container_name
@@ -116,7 +123,9 @@ class LogsScreen(Screen[None]):
             f"Logs\ncontext: {self.context}\nnamespace: {self.namespace}\ntarget: {target}",
             id="logs-title",
         )
+        yield Input(placeholder="filter logs", id="logs-filter")
         yield Log(id="logs-output", highlight=False)
+        yield Footer()
 
     def on_mount(self) -> None:
         self.load_logs()
@@ -124,6 +133,7 @@ class LogsScreen(Screen[None]):
     @work(exclusive=True)
     async def load_logs(self) -> None:
         output = self.query_one("#logs-output", Log)
+        output.clear()
         try:
             async with KubeClient(context=self.context) as kube_client:
                 logs = await read_pod_logs(
@@ -136,8 +146,38 @@ class LogsScreen(Screen[None]):
             output.write_line(f"error: {error}")
             return
 
-        if logs:
-            output.write_lines(logs.splitlines())
+        self.log_lines = logs.splitlines() if logs else []
+        self._render_logs()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "logs-filter":
+            return
+        self.filter_text = event.value
+        self._render_logs()
+
+    def action_focus_filter(self) -> None:
+        self.query_one("#logs-filter", Input).focus()
+
+    def action_reload(self) -> None:
+        self.load_logs()
+
+    def action_clear_filter(self) -> None:
+        log_filter = self.query_one("#logs-filter", Input)
+        log_filter.value = ""
+        self.filter_text = ""
+        self._render_logs()
+
+    def _render_logs(self) -> None:
+        output = self.query_one("#logs-output", Log)
+        output.clear()
+        if self.filter_text:
+            lines = [line for line in self.log_lines if self.filter_text in line]
+        else:
+            lines = self.log_lines
+        if lines:
+            output.write_lines(lines)
+        elif self.log_lines:
+            output.write_line("(no matching log lines)")
         else:
             output.write_line("(no logs)")
 

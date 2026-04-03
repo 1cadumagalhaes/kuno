@@ -1,6 +1,6 @@
 import pytest
 from textual.containers import Vertical
-from textual.widgets import DataTable, Input, Static
+from textual.widgets import DataTable, Input, Log, Static
 
 from kuno.app import AboutScreen, KunoApp, LogsScreen
 from kuno.k8s.config import UnknownContextError
@@ -507,6 +507,74 @@ async def test_app_opens_logs_from_selected_container(monkeypatch) -> None:
         app.execute_command("logs")
         await pilot.pause()
         assert isinstance(app.screen, LogsScreen)
+
+
+@pytest.mark.asyncio
+async def test_logs_screen_filters_lines(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    async def fake_read_pod_logs(
+        kube_client,
+        namespace: str,
+        pod_name: str,
+        *,
+        container_name: str | None = None,
+        tail_lines: int = 500,
+    ) -> str:
+        assert namespace == "payments"
+        assert pod_name == "api-1"
+        assert container_name == "api"
+        assert tail_lines == 500
+        return "info ready\nerror failed\ninfo steady"
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_pod_containers(
+        kube_client: FakeKubeClient, namespace: str, pod_name: str
+    ) -> list[ContainerSummary]:
+        return [
+            ContainerSummary(
+                name="api",
+                pod="api-1",
+                ready="yes",
+                state="Running",
+                restarts=0,
+                image="ghcr.io/example/api:1.0.0",
+                cpu="250m",
+                memory="128Mi",
+            )
+        ]
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_pod_containers", fake_list_pod_containers)
+    monkeypatch.setattr("kuno.app.read_pod_logs", fake_read_pod_logs)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app.current_view = ExplorerView.CONTAINERS
+    app.container_pod_name = "api-1"
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.refresh_current_view()
+        await pilot.pause()
+        app.execute_command("logs")
+        await pilot.pause()
+        assert isinstance(app.screen, LogsScreen)
+        log_filter = app.screen.query_one("#logs-filter", Input)
+        output = app.screen.query_one("#logs-output", Log)
+        log_filter.value = "error"
+        await pilot.pause()
+        assert output.line_count == 1
 
 
 @pytest.mark.asyncio
