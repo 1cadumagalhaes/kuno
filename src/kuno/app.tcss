@@ -81,3 +81,12 @@ Screen {
     max-height: 6;
     padding: 0 1;
 }
+
+#about-panel {
+    background: $panel;
+    border: round $accent;
+    height: auto;
+    margin: 8 24;
+    padding: 1 2;
+    width: auto;
+}

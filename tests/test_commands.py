@@ -6,6 +6,7 @@ from kuno.commands import ParsedCommand, parse_command, suggest_commands
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
+        (":about", ParsedCommand(name="about")),
         (":pods", ParsedCommand(name="pods")),
         ("refresh", ParsedCommand(name="refresh")),
         (":details", ParsedCommand(name="details")),
@@ -27,7 +28,7 @@ def test_parse_command_rejects_invalid_input(raw: str) -> None:
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
-        ("", ["pods", "refresh", "details", "hide-details", "ns", "ctx", "help"]),
+        ("", ["about", "pods", "refresh", "details", "hide-details", "ns", "ctx", "help"]),
         ("re", ["refresh"]),
         ("ns ", ["ns airflow", "ns billing"]),
         ("ns bi", ["ns billing"]),

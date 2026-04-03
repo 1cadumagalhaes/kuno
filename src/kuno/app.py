@@ -7,6 +7,7 @@ from typing import ClassVar
 from textual import events, work
 from textual.app import App, ComposeResult, SystemCommand
 from textual.containers import Horizontal, Vertical
+from textual.screen import ModalScreen
 from textual.widgets import DataTable, Footer, Input, Static
 
 from kuno.commands import ParsedCommand, parse_command, suggest_commands
@@ -16,9 +17,25 @@ from kuno.k8s.resources import list_namespaces, list_pods, render_pod_details, t
 from kuno.models import PodSummary, StartupConfig
 
 
+class AboutScreen(ModalScreen[None]):
+    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("escape", "close", "Close")]
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            "kuno\n\nA Kubernetes TUI focused on fast operational workflows and better logs.\n\n"
+            "Current slice:\n- pod explorer\n- command palette\n- vim-style : commands\n\n"
+            "Press Escape to close.",
+            id="about-panel",
+        )
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
 class KunoApp(App[None]):
     CSS_PATH = "app.tcss"
     MAX_COMMAND_SUGGESTIONS = 4
+    theme = "nord"
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("d", "toggle_details", "Details"),
         ("colon", "open_command_bar", "Command"),
@@ -169,7 +186,12 @@ class KunoApp(App[None]):
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id != "command-input":
             return
-        self.execute_command(event.value)
+        raw = event.value
+        if self.command_suggestions:
+            selected = self.command_suggestions[self.command_suggestion_index]
+            if raw.strip() != selected:
+                raw = selected
+        self.execute_command(raw)
         self.action_close_command_bar()
 
     def on_key(self, event: events.Key) -> None:
@@ -199,6 +221,7 @@ class KunoApp(App[None]):
             "Hide details", "Close the details side panel", self._command_hide_details
         )
         yield SystemCommand("Pods view", "Focus the pods table", self._command_pods)
+        yield SystemCommand("About", "Show information about kuno", self._command_about)
 
     def execute_command(self, raw: str) -> None:
         try:
@@ -209,6 +232,8 @@ class KunoApp(App[None]):
 
     def _run_command(self, command: ParsedCommand) -> None:
         match command.name:
+            case "about":
+                self._command_about()
             case "pods":
                 self._command_pods()
             case "refresh":
@@ -226,9 +251,14 @@ class KunoApp(App[None]):
                     raise ValueError("Command 'ctx' requires an argument")
                 self._command_context(command.argument)
             case "help":
-                self.notify("Commands: pods, refresh, details, hide-details, ns <ns>, ctx <ctx>")
+                self.notify(
+                    "Commands: about, pods, refresh, details, hide-details, ns <ns>, ctx <ctx>"
+                )
             case _:
                 self.notify(f"Unknown command: {command.name}", severity="error")
+
+    def _command_about(self) -> None:
+        self.push_screen(AboutScreen())
 
     def _command_pods(self) -> None:
         self.query_one("#pod-table", DataTable).focus()
