@@ -1,5 +1,5 @@
 import pytest
-from textual.widgets import ListView, Static
+from textual.widgets import DataTable, Static
 
 from kuno.app import KunoApp
 from kuno.k8s.config import UnknownContextError
@@ -35,10 +35,10 @@ async def test_app_renders_startup_summary(monkeypatch) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         summary = app.query_one("#startup-summary", Static)
-        pod_list = app.query_one("#pod-list", ListView)
+        pod_table = app.query_one("#pod-table", DataTable)
         pod_details = app.query_one("#pod-details", Static)
         assert summary.content == "kuno\ncontext: prod\nnamespace: payments"
-        assert len(pod_list.children) == 1
+        assert pod_table.row_count == 1
         assert pod_details.content == "pod\nname: api-1\nphase: Running"
 
 
@@ -86,9 +86,9 @@ async def test_app_renders_pod_loading_error(monkeypatch) -> None:
 
     async with app.run_test() as pilot:
         await pilot.pause()
-        pod_list = app.query_one("#pod-list", ListView)
+        pod_table = app.query_one("#pod-table", DataTable)
         pod_details = app.query_one("#pod-details", Static)
-        assert len(pod_list.children) == 0
+        assert pod_table.row_count == 0
         assert pod_details.content == "pod\n(error: boom)"
 
 
@@ -123,8 +123,9 @@ async def test_app_updates_details_for_highlighted_pod(monkeypatch) -> None:
 
     async with app.run_test() as pilot:
         await pilot.pause()
-        pod_list = app.query_one("#pod-list", ListView)
+        pod_table = app.query_one("#pod-table", DataTable)
         pod_details = app.query_one("#pod-details", Static)
-        pod_list.index = 1
+        pod_table.focus()
+        await pilot.press("down")
         await pilot.pause()
         assert pod_details.content == "pod\nname: worker-1\nphase: Pending"

@@ -3,11 +3,11 @@ from __future__ import annotations
 from textual import work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
-from textual.widgets import ListItem, ListView, Static
+from textual.widgets import DataTable, Static
 
 from kuno.k8s.client import KubeClient
 from kuno.k8s.config import UnknownContextError, load_startup_targets
-from kuno.k8s.resources import list_pods, render_pod_details, render_pod_row
+from kuno.k8s.resources import list_pods, render_pod_details
 from kuno.models import PodSummary, StartupConfig
 
 
@@ -21,12 +21,16 @@ class KunoApp(App[None]):
     def compose(self) -> ComposeResult:
         yield Static(self._summary_text(), id="startup-summary")
         with Horizontal():
-            yield ListView(id="pod-list", initial_index=None)
+            yield DataTable(id="pod-table")
             yield Static("pod\n(loading)", id="pod-details")
 
     def on_mount(self) -> None:
         summary = self.query_one("#startup-summary", Static)
+        pod_table = self.query_one("#pod-table", DataTable)
         pod_details = self.query_one("#pod-details", Static)
+        pod_table.cursor_type = "row"
+        pod_table.zebra_stripes = True
+        pod_table.add_columns("Name", "Phase")
         try:
             self.resolved_startup_config = load_startup_targets(self.startup_config)
         except UnknownContextError as error:
@@ -55,28 +59,28 @@ class KunoApp(App[None]):
                 pods = await list_pods(kube_client, namespace)
         except Exception as error:
             self.pods = []
-            await self._render_pod_list()
+            await self._render_pod_table()
             pod_details.update(f"pod\n(error: {error})")
             return
 
         self.pods = pods
-        await self._render_pod_list()
+        await self._render_pod_table()
         if self.pods:
             self._update_pod_details(0)
         else:
             pod_details.update("pod\n(no pods found)")
 
-    async def _render_pod_list(self) -> None:
-        pod_list = self.query_one("#pod-list", ListView)
-        await pod_list.clear()
-        await pod_list.extend(ListItem(Static(render_pod_row(pod))) for pod in self.pods)
-        pod_list.index = 0 if self.pods else None
+    async def _render_pod_table(self) -> None:
+        pod_table = self.query_one("#pod-table", DataTable)
+        pod_table.clear()
+        for pod in self.pods:
+            pod_table.add_row(pod.name, pod.phase, key=pod.name)
 
-    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
-        if event.list_view.id != "pod-list":
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        if event.data_table.id != "pod-table":
             return
 
-        self._update_pod_details(event.list_view.index)
+        self._update_pod_details(event.cursor_row)
 
     def _update_pod_details(self, index: int | None) -> None:
         pod_details = self.query_one("#pod-details", Static)
