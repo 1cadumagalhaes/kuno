@@ -5,8 +5,10 @@ from textual.widgets import DataTable, Input, Static
 from kuno.app import AboutScreen, KunoApp
 from kuno.k8s.config import UnknownContextError
 from kuno.models import (
+    ContextSummary,
     DeploymentSummary,
     ExplorerView,
+    NamespaceSummary,
     PodSummary,
     PvcSummary,
     SecretSummary,
@@ -14,6 +16,177 @@ from kuno.models import (
     StartupConfig,
     StatefulSetSummary,
 )
+
+
+@pytest.mark.asyncio
+async def test_app_starts_in_contexts_view(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+    monkeypatch.setattr(
+        "kuno.app.load_context_summaries",
+        lambda: [
+            ContextSummary(
+                name="prod",
+                cluster="prod-cluster",
+                user="prod-user",
+                namespace="payments",
+                current="*",
+            )
+        ],
+    )
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_namespaces(kube_client: FakeKubeClient) -> list[str]:
+        return ["payments"]
+
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_namespaces", fake_list_namespaces)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        table_title = app.query_one("#table-title", Static)
+        pod_table = app.query_one("#pod-table", DataTable)
+        assert app.current_view is ExplorerView.CONTEXTS
+        assert table_title.content == "Contexts"
+        assert pod_table.row_count == 1
+
+
+@pytest.mark.asyncio
+async def test_app_selecting_context_opens_namespaces(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+    monkeypatch.setattr(
+        "kuno.app.load_context_summaries",
+        lambda: [
+            ContextSummary(
+                name="prod",
+                cluster="prod-cluster",
+                user="prod-user",
+                namespace="payments",
+                current="*",
+            )
+        ],
+    )
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_namespaces(kube_client: FakeKubeClient) -> list[str]:
+        return ["payments"]
+
+    async def fake_list_namespace_summaries(
+        kube_client: FakeKubeClient, *, current_namespace: str | None
+    ) -> list[NamespaceSummary]:
+        assert current_namespace == "payments"
+        return [NamespaceSummary(name="payments", status="Active", age="1h", current="*")]
+
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_namespaces", fake_list_namespaces)
+    monkeypatch.setattr("kuno.app.list_namespace_summaries", fake_list_namespace_summaries)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        table_title = app.query_one("#table-title", Static)
+        assert app.current_view is ExplorerView.NAMESPACES
+        assert table_title.content == "Namespaces"
+
+
+@pytest.mark.asyncio
+async def test_app_selecting_namespace_opens_pods(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+    monkeypatch.setattr(
+        "kuno.app.load_context_summaries",
+        lambda: [
+            ContextSummary(
+                name="prod",
+                cluster="prod-cluster",
+                user="prod-user",
+                namespace="payments",
+                current="*",
+            )
+        ],
+    )
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_namespaces(kube_client: FakeKubeClient) -> list[str]:
+        return ["payments"]
+
+    async def fake_list_namespace_summaries(
+        kube_client: FakeKubeClient, *, current_namespace: str | None
+    ) -> list[NamespaceSummary]:
+        return [NamespaceSummary(name="payments", status="Active", age="1h", current="*")]
+
+    async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
+        assert namespace == "payments"
+        return [
+            PodSummary(
+                name="api-1",
+                ready="1/1",
+                status="Running",
+                restarts=0,
+                age="1m",
+                containers="api",
+                cpu="100m",
+                memory="64Mi",
+            )
+        ]
+
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_namespaces", fake_list_namespaces)
+    monkeypatch.setattr("kuno.app.list_namespace_summaries", fake_list_namespace_summaries)
+    monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        table_title = app.query_one("#table-title", Static)
+        pod_table = app.query_one("#pod-table", DataTable)
+        assert app.current_view is ExplorerView.PODS
+        assert table_title.content == "Pods"
+        assert pod_table.row_count == 1
 
 
 @pytest.mark.asyncio
@@ -52,6 +225,7 @@ async def test_app_renders_startup_summary(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
 
     app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app.current_view = ExplorerView.PODS
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -109,6 +283,7 @@ async def test_app_renders_pod_loading_error(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
 
     app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app.current_view = ExplorerView.PODS
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -164,6 +339,7 @@ async def test_app_updates_details_for_highlighted_pod(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
 
     app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app.current_view = ExplorerView.PODS
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1184,8 +1360,10 @@ async def test_app_exposes_clean_system_commands(monkeypatch) -> None:
         assert "Theme" in titles
         assert "Use context dev" in titles
         assert "Use namespace airflow" in titles
+        assert "Contexts" in titles
+        assert "Namespaces" in titles
         assert "Pods" in titles
-        assert "Refresh pods" in titles
+        assert "Refresh contexts" in titles
         assert "Quit" in titles
         assert all("Maximize" not in title for title in titles)
 

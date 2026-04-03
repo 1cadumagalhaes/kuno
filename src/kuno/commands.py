@@ -4,8 +4,10 @@ from dataclasses import dataclass
 
 COMMANDS = (
     "about",
+    "contexts",
     "deploy",
     "keys",
+    "namespaces",
     "pods",
     "pvc",
     "refresh",
@@ -42,8 +44,10 @@ def parse_command(raw: str) -> ParsedCommand:
 
     if name in {
         "about",
+        "contexts",
         "deploy",
         "keys",
+        "namespaces",
         "pods",
         "pvc",
         "refresh",

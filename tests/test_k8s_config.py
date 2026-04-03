@@ -1,7 +1,12 @@
 import pytest
 
-from kuno.k8s.config import DEFAULT_NAMESPACE, UnknownContextError, resolve_startup_targets
-from kuno.models import StartupConfig
+from kuno.k8s.config import (
+    DEFAULT_NAMESPACE,
+    UnknownContextError,
+    load_context_summaries,
+    resolve_startup_targets,
+)
+from kuno.models import ContextSummary, StartupConfig
 
 
 @pytest.fixture
@@ -78,3 +83,38 @@ def test_resolve_startup_targets_rejects_unknown_context(
             kube_contexts,
             kube_contexts[0],
         )
+
+
+def test_load_context_summaries_marks_current_context(monkeypatch) -> None:
+    kube_contexts = [
+        {
+            "name": "dev",
+            "context": {"cluster": "dev-cluster", "user": "dev-user", "namespace": "payments"},
+        },
+        {
+            "name": "prod",
+            "context": {"cluster": "prod-cluster", "user": "prod-user"},
+        },
+    ]
+
+    monkeypatch.setattr(
+        "kuno.k8s.config.list_kube_config_contexts",
+        lambda config_file=None: (kube_contexts, kube_contexts[1]),
+    )
+
+    assert load_context_summaries() == [
+        ContextSummary(
+            name="dev",
+            cluster="dev-cluster",
+            user="dev-user",
+            namespace="payments",
+            current="",
+        ),
+        ContextSummary(
+            name="prod",
+            cluster="prod-cluster",
+            user="prod-user",
+            namespace=DEFAULT_NAMESPACE,
+            current="*",
+        ),
+    ]

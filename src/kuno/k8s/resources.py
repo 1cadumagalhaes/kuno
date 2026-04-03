@@ -7,7 +7,9 @@ from typing import Any, Protocol
 from kubernetes_asyncio.client import AppsV1Api, CoreV1Api
 
 from kuno.models import (
+    ContextSummary,
     DeploymentSummary,
+    NamespaceSummary,
     PodSummary,
     PvcSummary,
     SecretSummary,
@@ -45,6 +47,20 @@ async def list_namespaces(kube_client: HasCoreV1) -> list[str]:
         if isinstance(name, str) and name:
             names.append(name)
     return sorted(names)
+
+
+async def list_namespace_summaries(
+    kube_client: HasCoreV1, *, current_namespace: str | None
+) -> list[NamespaceSummary]:
+    if kube_client.core_v1 is None:
+        raise RuntimeError("Kubernetes client is not connected")
+
+    namespace_list = await kube_client.core_v1.list_namespace()
+    current = datetime.now(UTC)
+    return [
+        namespace_summary_from_api_item(item, now=current, current_namespace=current_namespace)
+        for item in namespace_list.items
+    ]
 
 
 async def list_services(kube_client: HasCoreV1, namespace: str) -> list[ServiceSummary]:
@@ -221,6 +237,25 @@ def pvc_summary_from_api_item(item: Any, now: datetime | None = None) -> PvcSumm
         access=access_modes_summary(getattr(spec, "access_modes", None)),
         storage_class=string_or_default(getattr(spec, "storage_class_name", None), "-"),
         age=format_age(creation_timestamp, now=now),
+    )
+
+
+def namespace_summary_from_api_item(
+    item: Any, *, now: datetime | None = None, current_namespace: str | None
+) -> NamespaceSummary:
+    metadata = getattr(item, "metadata", None)
+    status = getattr(item, "status", None)
+    name = getattr(metadata, "name", None)
+    creation_timestamp = getattr(metadata, "creation_timestamp", None)
+
+    if not isinstance(name, str) or not name:
+        raise ValueError("Namespace is missing a valid name")
+
+    return NamespaceSummary(
+        name=name,
+        status=string_or_default(getattr(status, "phase", None), "Active"),
+        age=format_age(creation_timestamp, now=now),
+        current="*" if current_namespace == name else "",
     )
 
 
@@ -458,6 +493,27 @@ def render_pvc_details(pvc: PvcSummary) -> str:
         f"access: {pvc.access}\n"
         f"storage-class: {pvc.storage_class}\n"
         f"age: {pvc.age}"
+    )
+
+
+def render_namespace_details(namespace: NamespaceSummary) -> str:
+    return (
+        "namespace\n"
+        f"name: {namespace.name}\n"
+        f"status: {namespace.status}\n"
+        f"age: {namespace.age}\n"
+        f"current: {namespace.current or 'no'}"
+    )
+
+
+def render_context_details(context: ContextSummary) -> str:
+    return (
+        "context\n"
+        f"name: {context.name}\n"
+        f"cluster: {context.cluster}\n"
+        f"user: {context.user}\n"
+        f"namespace: {context.namespace}\n"
+        f"current: {context.current or 'no'}"
     )
 
 

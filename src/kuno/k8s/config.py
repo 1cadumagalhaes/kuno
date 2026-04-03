@@ -5,7 +5,7 @@ from typing import Any
 
 from kubernetes_asyncio.config import list_kube_config_contexts
 
-from kuno.models import StartupConfig
+from kuno.models import ContextSummary, StartupConfig
 
 DEFAULT_NAMESPACE = "default"
 
@@ -27,6 +27,13 @@ def load_startup_targets(
 def load_available_context_names(config_file: str | None = None) -> list[str]:
     contexts, _ = list_kube_config_contexts(config_file=config_file)
     return sorted(context_name(context) for context in contexts)
+
+
+def load_context_summaries(config_file: str | None = None) -> list[ContextSummary]:
+    contexts, current_context = list_kube_config_contexts(config_file=config_file)
+    current_name = context_name(current_context) if current_context is not None else None
+    summaries = [context_summary(context, current_name=current_name) for context in contexts]
+    return sorted(summaries, key=lambda summary: summary.name)
 
 
 def resolve_startup_targets(
@@ -78,3 +85,21 @@ def context_name(context: ContextEntry) -> str:
     if not isinstance(name, str) or not name:
         raise ValueError("Kubeconfig context is missing a valid name")
     return name
+
+
+def context_summary(context: ContextEntry, *, current_name: str | None) -> ContextSummary:
+    data = context.get("context", {})
+    if not isinstance(data, Mapping):
+        data = {}
+    name = context_name(context)
+    return ContextSummary(
+        name=name,
+        cluster=_string_or_default(data.get("cluster"), "-"),
+        user=_string_or_default(data.get("user"), "-"),
+        namespace=_string_or_default(data.get("namespace"), DEFAULT_NAMESPACE),
+        current="*" if current_name == name else "",
+    )
+
+
+def _string_or_default(value: Any, default: str) -> str:
+    return value if isinstance(value, str) and value else default

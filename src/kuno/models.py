@@ -21,12 +21,31 @@ class PodSummary:
 
 
 class ExplorerView(StrEnum):
+    CONTEXTS = "contexts"
+    NAMESPACES = "namespaces"
     PODS = "pods"
     DEPLOYMENTS = "deployments"
     STATEFULSETS = "statefulsets"
     SERVICES = "services"
     PVC = "pvc"
     SECRETS = "secrets"
+
+
+@dataclass(slots=True)
+class ContextSummary:
+    name: str
+    cluster: str
+    user: str
+    namespace: str
+    current: str
+
+
+@dataclass(slots=True)
+class NamespaceSummary:
+    name: str
+    status: str
+    age: str
+    current: str
 
 
 @dataclass(slots=True)

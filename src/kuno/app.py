@@ -12,16 +12,24 @@ from textual.widgets import DataTable, Footer, Input, Static
 
 from kuno.commands import ParsedCommand, parse_command, suggest_commands
 from kuno.k8s.client import KubeClient
-from kuno.k8s.config import UnknownContextError, load_available_context_names, load_startup_targets
+from kuno.k8s.config import (
+    UnknownContextError,
+    load_available_context_names,
+    load_context_summaries,
+    load_startup_targets,
+)
 from kuno.k8s.resources import (
     list_deployments,
+    list_namespace_summaries,
     list_namespaces,
     list_pods,
     list_pvcs,
     list_secrets,
     list_services,
     list_statefulsets,
+    render_context_details,
     render_deployment_details,
+    render_namespace_details,
     render_pod_details,
     render_pvc_details,
     render_secret_details,
@@ -30,8 +38,10 @@ from kuno.k8s.resources import (
     truncate_for_table,
 )
 from kuno.models import (
+    ContextSummary,
     DeploymentSummary,
     ExplorerView,
+    NamespaceSummary,
     PodSummary,
     PvcSummary,
     SecretSummary,
@@ -74,8 +84,10 @@ class KunoApp(App[None]):
         self.command_bar_visible = False
         self.command_suggestions: list[str] = []
         self.command_suggestion_index = 0
-        self.current_view = ExplorerView.PODS
+        self.contexts: list[ContextSummary] = []
+        self.current_view = ExplorerView.CONTEXTS
         self.details_visible = False
+        self.namespaces: list[NamespaceSummary] = []
         self.startup_config = startup_config
         self.deployments: list[DeploymentSummary] = []
         self.pods: list[PodSummary] = []
@@ -140,20 +152,46 @@ class KunoApp(App[None]):
         try:
             async with KubeClient(context=context) as kube_client:
                 if self.current_view is ExplorerView.PODS:
+                    self.contexts = []
+                    self.namespaces = []
                     self.pods = await list_pods(kube_client, namespace)
                     self.deployments = []
                     self.pvcs = []
                     self.secrets = []
                     self.services = []
                     self.statefulsets = []
+                elif self.current_view is ExplorerView.CONTEXTS:
+                    self.contexts = load_context_summaries()
+                    self.namespaces = []
+                    self.pods = []
+                    self.deployments = []
+                    self.pvcs = []
+                    self.secrets = []
+                    self.services = []
+                    self.statefulsets = []
                 elif self.current_view is ExplorerView.DEPLOYMENTS:
+                    self.contexts = []
+                    self.namespaces = []
                     self.deployments = await list_deployments(kube_client, namespace)
                     self.pods = []
                     self.pvcs = []
                     self.secrets = []
                     self.services = []
                     self.statefulsets = []
+                elif self.current_view is ExplorerView.NAMESPACES:
+                    self.contexts = []
+                    self.namespaces = await list_namespace_summaries(
+                        kube_client, current_namespace=namespace
+                    )
+                    self.pods = []
+                    self.deployments = []
+                    self.pvcs = []
+                    self.secrets = []
+                    self.services = []
+                    self.statefulsets = []
                 elif self.current_view is ExplorerView.PVC:
+                    self.contexts = []
+                    self.namespaces = []
                     self.pvcs = await list_pvcs(kube_client, namespace)
                     self.pods = []
                     self.deployments = []
@@ -161,6 +199,8 @@ class KunoApp(App[None]):
                     self.services = []
                     self.statefulsets = []
                 elif self.current_view is ExplorerView.SECRETS:
+                    self.contexts = []
+                    self.namespaces = []
                     self.secrets = await list_secrets(kube_client, namespace)
                     self.pods = []
                     self.deployments = []
@@ -168,6 +208,8 @@ class KunoApp(App[None]):
                     self.services = []
                     self.statefulsets = []
                 elif self.current_view is ExplorerView.SERVICES:
+                    self.contexts = []
+                    self.namespaces = []
                     self.services = await list_services(kube_client, namespace)
                     self.pods = []
                     self.deployments = []
@@ -175,6 +217,8 @@ class KunoApp(App[None]):
                     self.secrets = []
                     self.statefulsets = []
                 else:
+                    self.contexts = []
+                    self.namespaces = []
                     self.statefulsets = await list_statefulsets(kube_client, namespace)
                     self.pods = []
                     self.deployments = []
@@ -184,6 +228,8 @@ class KunoApp(App[None]):
                 with suppress(Exception):
                     self.available_namespaces = await list_namespaces(kube_client)
         except Exception as error:
+            self.contexts = []
+            self.namespaces = []
             self.pods = []
             self.deployments = []
             self.pvcs = []
@@ -218,6 +264,16 @@ class KunoApp(App[None]):
                     pod.memory,
                     pod.containers,
                     key=pod.name,
+                )
+        elif self.current_view is ExplorerView.CONTEXTS:
+            for context in self.contexts:
+                pod_table.add_row(
+                    truncate_for_table(context.name),
+                    context.cluster,
+                    context.user,
+                    context.namespace,
+                    context.current,
+                    key=context.name,
                 )
         elif self.current_view is ExplorerView.DEPLOYMENTS:
             for deployment in self.deployments:
@@ -255,6 +311,15 @@ class KunoApp(App[None]):
                     pvc.age,
                     key=pvc.name,
                 )
+        elif self.current_view is ExplorerView.NAMESPACES:
+            for namespace in self.namespaces:
+                pod_table.add_row(
+                    truncate_for_table(namespace.name),
+                    namespace.status,
+                    namespace.age,
+                    namespace.current,
+                    key=namespace.name,
+                )
         elif self.current_view is ExplorerView.SECRETS:
             for secret in self.secrets:
                 pod_table.add_row(
@@ -284,6 +349,15 @@ class KunoApp(App[None]):
             return
 
         self._update_pod_details(event.cursor_row)
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        if event.data_table.id != "pod-table":
+            return
+
+        if self.current_view is ExplorerView.CONTEXTS:
+            self._open_selected_context(event.cursor_row)
+        elif self.current_view is ExplorerView.NAMESPACES:
+            self._open_selected_namespace(event.cursor_row)
 
     def action_toggle_details(self) -> None:
         self.details_visible = not self.details_visible
@@ -395,9 +469,19 @@ class KunoApp(App[None]):
             self._command_pods,
         )
         yield SystemCommand(
+            "Contexts",
+            "Show kube contexts in the main table",
+            self._command_contexts,
+        )
+        yield SystemCommand(
             "Deployments",
             "Show deployments in the main table",
             self._command_deployments,
+        )
+        yield SystemCommand(
+            "Namespaces",
+            "Show namespaces in the main table",
+            self._command_namespaces,
         )
         yield SystemCommand(
             "PVC",
@@ -449,10 +533,14 @@ class KunoApp(App[None]):
         match command.name:
             case "about":
                 self._command_about()
+            case "contexts":
+                self._command_contexts()
             case "keys":
                 self._command_keys()
             case "deploy":
                 self._command_deployments()
+            case "namespaces":
+                self._command_namespaces()
             case "pods":
                 self._command_pods()
             case "pvc":
@@ -481,7 +569,7 @@ class KunoApp(App[None]):
                 self._command_context(command.argument)
             case "help":
                 self.notify(
-                    "Commands: about, keys, pods, refresh, details, hide-details, theme [name], ns <ns>, ctx <ctx>"
+                    "Commands: about, contexts, namespaces, pods, deploy, sts, svc, pvc, secrets, refresh, details, hide-details, theme [name], ns <ns>, ctx <ctx>"
                 )
             case _:
                 self.notify(f"Unknown command: {command.name}", severity="error")
@@ -495,9 +583,37 @@ class KunoApp(App[None]):
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
 
+    def _open_selected_context(self, index: int) -> None:
+        if index < 0 or index >= len(self.contexts):
+            return
+        context = self.contexts[index]
+        self._command_context(context.name)
+        self.current_view = ExplorerView.NAMESPACES
+        self.refresh_current_view()
+
+    def _open_selected_namespace(self, index: int) -> None:
+        if index < 0 or index >= len(self.namespaces):
+            return
+        namespace = self.namespaces[index]
+        self._command_namespace(namespace.name)
+        self.current_view = ExplorerView.PODS
+        self.refresh_current_view()
+
+    def _command_contexts(self) -> None:
+        if self.current_view is not ExplorerView.CONTEXTS:
+            self.current_view = ExplorerView.CONTEXTS
+            self.refresh_current_view()
+        self.query_one("#pod-table", DataTable).focus()
+
     def _command_deployments(self) -> None:
         if self.current_view is not ExplorerView.DEPLOYMENTS:
             self.current_view = ExplorerView.DEPLOYMENTS
+            self.refresh_current_view()
+        self.query_one("#pod-table", DataTable).focus()
+
+    def _command_namespaces(self) -> None:
+        if self.current_view is not ExplorerView.NAMESPACES:
+            self.current_view = ExplorerView.NAMESPACES
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
 
@@ -629,8 +745,12 @@ class KunoApp(App[None]):
             return
         if self.current_view is ExplorerView.PODS:
             pod_details.update(render_pod_details(self.pods[index]))
+        elif self.current_view is ExplorerView.CONTEXTS:
+            pod_details.update(render_context_details(self.contexts[index]))
         elif self.current_view is ExplorerView.DEPLOYMENTS:
             pod_details.update(render_deployment_details(self.deployments[index]))
+        elif self.current_view is ExplorerView.NAMESPACES:
+            pod_details.update(render_namespace_details(self.namespaces[index]))
         elif self.current_view is ExplorerView.PVC:
             pod_details.update(render_pvc_details(self.pvcs[index]))
         elif self.current_view is ExplorerView.SECRETS:
@@ -648,10 +768,14 @@ class KunoApp(App[None]):
             pod_table.add_columns(
                 "Ready", "Status", "Restarts", "Age", "CPU", "Memory", "Containers"
             )
+        elif self.current_view is ExplorerView.CONTEXTS:
+            pod_table.add_columns("Cluster", "User", "Namespace", "Current")
         elif self.current_view is ExplorerView.DEPLOYMENTS:
             pod_table.add_columns(
                 "Ready", "Up-to-date", "Available", "Age", "CPU", "Memory", "Containers"
             )
+        elif self.current_view is ExplorerView.NAMESPACES:
+            pod_table.add_columns("Status", "Age", "Current")
         elif self.current_view is ExplorerView.PVC:
             pod_table.add_columns("Status", "Volume", "Capacity", "Access", "StorageClass", "Age")
         elif self.current_view is ExplorerView.SECRETS:
@@ -666,15 +790,21 @@ class KunoApp(App[None]):
     def _current_rows(
         self,
     ) -> (
-        list[PodSummary]
+        list[ContextSummary]
+        | list[PodSummary]
         | list[DeploymentSummary]
+        | list[NamespaceSummary]
         | list[PvcSummary]
         | list[SecretSummary]
         | list[ServiceSummary]
         | list[StatefulSetSummary]
     ):
+        if self.current_view is ExplorerView.CONTEXTS:
+            return self.contexts
         if self.current_view is ExplorerView.PODS:
             return self.pods
+        if self.current_view is ExplorerView.NAMESPACES:
+            return self.namespaces
         if self.current_view is ExplorerView.DEPLOYMENTS:
             return self.deployments
         if self.current_view is ExplorerView.PVC:
@@ -686,8 +816,12 @@ class KunoApp(App[None]):
         return self.statefulsets
 
     def _panel_title(self) -> str:
+        if self.current_view is ExplorerView.CONTEXTS:
+            return "Contexts"
         if self.current_view is ExplorerView.PODS:
             return "Pods"
+        if self.current_view is ExplorerView.NAMESPACES:
+            return "Namespaces"
         if self.current_view is ExplorerView.DEPLOYMENTS:
             return "Deployments"
         if self.current_view is ExplorerView.PVC:
@@ -699,8 +833,12 @@ class KunoApp(App[None]):
         return "StatefulSets"
 
     def _details_title(self) -> str:
+        if self.current_view is ExplorerView.CONTEXTS:
+            return "Context Details"
         if self.current_view is ExplorerView.PODS:
             return "Pod Details"
+        if self.current_view is ExplorerView.NAMESPACES:
+            return "Namespace Details"
         if self.current_view is ExplorerView.DEPLOYMENTS:
             return "Deployment Details"
         if self.current_view is ExplorerView.PVC:
@@ -712,8 +850,12 @@ class KunoApp(App[None]):
         return "StatefulSet Details"
 
     def _view_singular(self) -> str:
+        if self.current_view is ExplorerView.CONTEXTS:
+            return "context"
         if self.current_view is ExplorerView.PODS:
             return "pod"
+        if self.current_view is ExplorerView.NAMESPACES:
+            return "namespace"
         if self.current_view is ExplorerView.DEPLOYMENTS:
             return "deployment"
         if self.current_view is ExplorerView.PVC:

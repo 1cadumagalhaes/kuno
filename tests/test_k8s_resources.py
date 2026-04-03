@@ -10,16 +10,20 @@ from kuno.k8s.resources import (
     format_cpu_requests,
     format_memory_requests,
     list_deployments,
+    list_namespace_summaries,
     list_namespaces,
     list_pods,
     list_pvcs,
     list_secrets,
     list_services,
     list_statefulsets,
+    namespace_summary_from_api_item,
     pod_ready,
     pod_restarts,
     pod_summary_from_api_item,
     pvc_summary_from_api_item,
+    render_context_details,
+    render_namespace_details,
     render_pod_details,
     render_pvc_details,
     render_secret_details,
@@ -31,7 +35,9 @@ from kuno.k8s.resources import (
     truncate_for_table,
 )
 from kuno.models import (
+    ContextSummary,
     DeploymentSummary,
+    NamespaceSummary,
     PodSummary,
     PvcSummary,
     SecretSummary,
@@ -628,4 +634,65 @@ def test_render_secret_details_formats_secret() -> None:
             )
         )
         == "secret\nname: app-secrets\ntype: Opaque\ndata-items: 2\nimmutable: yes\nage: 1h"
+    )
+
+
+def test_namespace_summary_from_api_item_reads_operational_fields() -> None:
+    item = SimpleNamespace(
+        metadata=SimpleNamespace(
+            name="airflow",
+            creation_timestamp=datetime(2026, 4, 2, 11, 0, tzinfo=UTC),
+        ),
+        status=SimpleNamespace(phase="Active"),
+    )
+
+    assert namespace_summary_from_api_item(
+        item, now=datetime(2026, 4, 2, 12, 0, tzinfo=UTC), current_namespace="airflow"
+    ) == NamespaceSummary(name="airflow", status="Active", age="1h", current="*")
+
+
+@pytest.mark.asyncio
+async def test_list_namespace_summaries_maps_api_items() -> None:
+    items = [
+        SimpleNamespace(
+            metadata=SimpleNamespace(name="airflow"), status=SimpleNamespace(phase="Active")
+        ),
+        SimpleNamespace(
+            metadata=SimpleNamespace(name="billing"), status=SimpleNamespace(phase="Active")
+        ),
+    ]
+
+    class FakeCoreV1:
+        async def list_namespace(self) -> SimpleNamespace:
+            return SimpleNamespace(items=items)
+
+    kube_client = SimpleNamespace(core_v1=FakeCoreV1())
+
+    assert await list_namespace_summaries(kube_client, current_namespace="billing") == [
+        NamespaceSummary(name="airflow", status="Active", age="-", current=""),
+        NamespaceSummary(name="billing", status="Active", age="-", current="*"),
+    ]
+
+
+def test_render_namespace_details_formats_namespace() -> None:
+    assert (
+        render_namespace_details(
+            NamespaceSummary(name="airflow", status="Active", age="1h", current="*")
+        )
+        == "namespace\nname: airflow\nstatus: Active\nage: 1h\ncurrent: *"
+    )
+
+
+def test_render_context_details_formats_context() -> None:
+    assert (
+        render_context_details(
+            ContextSummary(
+                name="prod",
+                cluster="prod-cluster",
+                user="prod-user",
+                namespace="airflow",
+                current="*",
+            )
+        )
+        == "context\nname: prod\ncluster: prod-cluster\nuser: prod-user\nnamespace: airflow\ncurrent: *"
     )
