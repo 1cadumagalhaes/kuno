@@ -493,7 +493,7 @@ async def test_app_executes_theme_command(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_app_groups_system_commands(monkeypatch) -> None:
+async def test_app_exposes_clean_system_commands(monkeypatch) -> None:
     def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
         return startup_config
 
@@ -524,14 +524,14 @@ async def test_app_groups_system_commands(monkeypatch) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         titles = [command.title for command in app.get_system_commands(app.screen)]
-        assert "Kuno / Help / About" in titles
-        assert "Kuno / Help / Keys" in titles
-        assert "Kuno / Config / Theme" in titles
-        assert "Kuno / Config / Context / dev" in titles
-        assert "Kuno / Config / Namespace / airflow" in titles
-        assert "Kuno / View / Pods" in titles
-        assert "Kuno / View / Pods / Refresh" in titles
-        assert "App / Quit" in titles
+        assert "About" in titles
+        assert "Keys" in titles
+        assert "Theme" in titles
+        assert "Use context dev" in titles
+        assert "Use namespace airflow" in titles
+        assert "Pods" in titles
+        assert "Refresh pods" in titles
+        assert "Quit" in titles
         assert all("Maximize" not in title for title in titles)
 
 
