@@ -46,6 +46,24 @@ async def list_pod_containers(
     return container_summaries_from_pod(pod)
 
 
+async def read_pod_logs(
+    kube_client: HasCoreV1,
+    namespace: str,
+    pod_name: str,
+    *,
+    container_name: str | None = None,
+    tail_lines: int = 500,
+) -> str:
+    if kube_client.core_v1 is None:
+        raise RuntimeError("Kubernetes client is not connected")
+
+    kwargs: dict[str, Any] = {"tail_lines": tail_lines}
+    if container_name is not None:
+        kwargs["container"] = container_name
+    result = await kube_client.core_v1.read_namespaced_pod_log(pod_name, namespace, **kwargs)
+    return result if isinstance(result, str) else ""
+
+
 async def list_namespaces(kube_client: HasCoreV1) -> list[str]:
     if kube_client.core_v1 is None:
         raise RuntimeError("Kubernetes client is not connected")

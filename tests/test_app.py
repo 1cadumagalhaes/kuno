@@ -2,7 +2,7 @@ import pytest
 from textual.containers import Vertical
 from textual.widgets import DataTable, Input, Static
 
-from kuno.app import AboutScreen, KunoApp
+from kuno.app import AboutScreen, KunoApp, LogsScreen
 from kuno.k8s.config import UnknownContextError
 from kuno.models import (
     ContainerSummary,
@@ -414,6 +414,99 @@ async def test_app_restart_command_opens_confirmation_for_deployment(monkeypatch
         await pilot.pause()
         confirm_title = app.screen.query_one("#confirm-title", Static)
         assert str(confirm_title.content) == "Restart resource"
+
+
+@pytest.mark.asyncio
+async def test_app_opens_logs_from_selected_pod(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
+        return [
+            PodSummary(
+                name="api-1",
+                ready="1/1",
+                status="Running",
+                restarts=0,
+                age="1m",
+                containers="api",
+                cpu="100m",
+                memory="64Mi",
+            )
+        ]
+
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app.current_view = ExplorerView.PODS
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.execute_command("logs")
+        await pilot.pause()
+        assert isinstance(app.screen, LogsScreen)
+
+
+@pytest.mark.asyncio
+async def test_app_opens_logs_from_selected_container(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_pod_containers(
+        kube_client: FakeKubeClient, namespace: str, pod_name: str
+    ) -> list[ContainerSummary]:
+        return [
+            ContainerSummary(
+                name="api",
+                pod="api-1",
+                ready="yes",
+                state="Running",
+                restarts=0,
+                image="ghcr.io/example/api:1.0.0",
+                cpu="250m",
+                memory="128Mi",
+            )
+        ]
+
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_pod_containers", fake_list_pod_containers)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app.current_view = ExplorerView.CONTAINERS
+    app.container_pod_name = "api-1"
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.refresh_current_view()
+        await pilot.pause()
+        app.execute_command("logs")
+        await pilot.pause()
+        assert isinstance(app.screen, LogsScreen)
 
 
 @pytest.mark.asyncio

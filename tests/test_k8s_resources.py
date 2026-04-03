@@ -24,6 +24,7 @@ from kuno.k8s.resources import (
     pod_restarts,
     pod_summary_from_api_item,
     pvc_summary_from_api_item,
+    read_pod_logs,
     render_container_details,
     render_context_details,
     render_namespace_details,
@@ -823,4 +824,21 @@ def test_render_container_details_formats_container() -> None:
             )
         )
         == "container\nname: api\npod: api-1\nready: yes\nstate: Running\nrestarts: 1\nimage: ghcr.io/example/api:1.0.0\ncpu: 250m\nmemory: 128Mi"
+    )
+
+
+@pytest.mark.asyncio
+async def test_read_pod_logs_reads_selected_pod_and_container() -> None:
+    class FakeCoreV1:
+        async def read_namespaced_pod_log(self, name: str, namespace: str, **kwargs) -> str:
+            assert name == "api-1"
+            assert namespace == "payments"
+            assert kwargs == {"tail_lines": 500, "container": "api"}
+            return "line-1\nline-2"
+
+    kube_client = SimpleNamespace(core_v1=FakeCoreV1())
+
+    assert (
+        await read_pod_logs(kube_client, "payments", "api-1", container_name="api")
+        == "line-1\nline-2"
     )

@@ -7,8 +7,8 @@ from typing import ClassVar
 from textual import events, work
 from textual.app import App, ComposeResult, SystemCommand
 from textual.containers import Horizontal, Vertical
-from textual.screen import ModalScreen
-from textual.widgets import Button, DataTable, Footer, Input, Static
+from textual.screen import ModalScreen, Screen
+from textual.widgets import Button, DataTable, Footer, Input, Log, Static
 
 from kuno.commands import ParsedCommand, parse_command, suggest_commands
 from kuno.k8s.actions import delete_resource, restart_resource
@@ -29,6 +29,7 @@ from kuno.k8s.resources import (
     list_secrets,
     list_services,
     list_statefulsets,
+    read_pod_logs,
     render_container_details,
     render_context_details,
     render_deployment_details,
@@ -88,12 +89,69 @@ class ConfirmActionScreen(ModalScreen[bool]):
         self.dismiss(event.button.id == "confirm-yes")
 
 
+class LogsScreen(Screen[None]):
+    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("escape", "close", "Back")]
+
+    def __init__(
+        self,
+        *,
+        context: str,
+        namespace: str,
+        pod_name: str,
+        container_name: str | None,
+    ) -> None:
+        super().__init__()
+        self.context = context
+        self.namespace = namespace
+        self.pod_name = pod_name
+        self.container_name = container_name
+
+    def compose(self) -> ComposeResult:
+        target = (
+            self.pod_name
+            if self.container_name is None
+            else f"{self.pod_name}/{self.container_name}"
+        )
+        yield Static(
+            f"Logs\ncontext: {self.context}\nnamespace: {self.namespace}\ntarget: {target}",
+            id="logs-title",
+        )
+        yield Log(id="logs-output", highlight=False)
+
+    def on_mount(self) -> None:
+        self.load_logs()
+
+    @work(exclusive=True)
+    async def load_logs(self) -> None:
+        output = self.query_one("#logs-output", Log)
+        try:
+            async with KubeClient(context=self.context) as kube_client:
+                logs = await read_pod_logs(
+                    kube_client,
+                    self.namespace,
+                    self.pod_name,
+                    container_name=self.container_name,
+                )
+        except Exception as error:
+            output.write_line(f"error: {error}")
+            return
+
+        if logs:
+            output.write_lines(logs.splitlines())
+        else:
+            output.write_line("(no logs)")
+
+    def action_close(self) -> None:
+        self.app.pop_screen()
+
+
 class KunoApp(App[None]):
     CSS_PATH = "app.tcss"
     MAX_COMMAND_SUGGESTIONS = 4
     theme = "nord"
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("d", "toggle_details", "Details"),
+        ("l", "open_logs", "Logs"),
         ("colon", "open_command_bar", "Command"),
         ("escape", "close_command_bar", "Close"),
         ("r", "refresh_pods", "Refresh"),
@@ -544,6 +602,12 @@ class KunoApp(App[None]):
             "Show containers for the selected pod",
             self._command_containers,
         )
+        if self._can_open_logs_selected():
+            yield SystemCommand(
+                "Logs",
+                f"Open logs for the selected {self._view_singular()}",
+                self._command_logs,
+            )
         if self._can_delete_selected():
             yield SystemCommand(
                 "Delete selected",
@@ -629,6 +693,8 @@ class KunoApp(App[None]):
                 self._command_delete()
             case "keys":
                 self._command_keys()
+            case "logs":
+                self._command_logs()
             case "deploy":
                 self._command_deployments()
             case "namespaces":
@@ -663,7 +729,7 @@ class KunoApp(App[None]):
                 self._command_context(command.argument)
             case "help":
                 self.notify(
-                    "Commands: about, contexts, namespaces, pods, containers, deploy, sts, svc, pvc, secrets, refresh, details, hide-details, del, restart, theme [name], ns <ns>, ctx <ctx>"
+                    "Commands: about, contexts, namespaces, pods, containers, deploy, sts, svc, pvc, secrets, logs, refresh, details, hide-details, del, restart, theme [name], ns <ns>, ctx <ctx>"
                 )
             case _:
                 self.notify(f"Unknown command: {command.name}", severity="error")
@@ -763,6 +829,28 @@ class KunoApp(App[None]):
             self.action_hide_help_panel()
         else:
             self.action_show_help_panel()
+
+    def action_open_logs(self) -> None:
+        self._command_logs()
+
+    def _command_logs(self) -> None:
+        target = self._selected_logs_target()
+        if target is None:
+            self.notify("Logs are not available for the current selection", severity="warning")
+            return
+        startup_target = self._require_target()
+        if startup_target.context is None or startup_target.namespace is None:
+            self.notify("Startup target is not resolved", severity="error")
+            return
+        pod_name, container_name = target
+        self.push_screen(
+            LogsScreen(
+                context=startup_target.context,
+                namespace=startup_target.namespace,
+                pod_name=pod_name,
+                container_name=container_name,
+            )
+        )
 
     def _command_delete(self) -> None:
         selection = self._selected_resource_name()
@@ -945,6 +1033,25 @@ class KunoApp(App[None]):
 
     def _can_restart_selected(self) -> bool:
         return self.current_view in {ExplorerView.DEPLOYMENTS, ExplorerView.STATEFULSETS}
+
+    def _can_open_logs_selected(self) -> bool:
+        return self.current_view in {ExplorerView.PODS, ExplorerView.CONTAINERS}
+
+    def _selected_logs_target(self) -> tuple[str, str | None] | None:
+        pod_table = self.query_one("#pod-table", DataTable)
+        cursor_row = pod_table.cursor_row
+        if cursor_row is None or cursor_row < 0:
+            return None
+        if self.current_view is ExplorerView.PODS:
+            if cursor_row >= len(self.pods):
+                return None
+            return (self.pods[cursor_row].name, None)
+        if self.current_view is ExplorerView.CONTAINERS:
+            if cursor_row >= len(self.containers):
+                return None
+            container = self.containers[cursor_row]
+            return (container.pod, container.name)
+        return None
 
     def _update_command_suggestions(self, raw: str) -> None:
         self.command_suggestions = suggest_commands(
