@@ -95,25 +95,6 @@ class ConfirmActionScreen(ModalScreen[bool]):
         self.dismiss(event.button.id == "confirm-yes")
 
 
-class LogDetailScreen(ModalScreen[None]):
-    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("escape", "close", "Close")]
-
-    def __init__(self, line: str) -> None:
-        super().__init__()
-        self.line = line
-
-    def compose(self) -> ComposeResult:
-        pretty = "\n".join(format_log_line(self.line, LogMode.PRETTY))
-        parsed = parse_log_line(self.line)
-        yield Static(
-            f"Log Detail\n\nraw:\n{parsed.raw}\n\npretty:\n{pretty}",
-            id="log-detail-panel",
-        )
-
-    def action_close(self) -> None:
-        self.dismiss(None)
-
-
 class LogsScreen(Screen[None]):
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("escape", "close", "Back"),
@@ -148,6 +129,7 @@ class LogsScreen(Screen[None]):
         self.namespace = namespace
         self.pod_name = pod_name
         self.container_name = container_name
+        self.details_visible = False
         self.selected_log_index = 0
         self.since_text = ""
         self.stream_worker = None
@@ -167,11 +149,16 @@ class LogsScreen(Screen[None]):
         with Horizontal(id="logs-controls"):
             yield Input(placeholder="since (e.g. 5m, 1h)", id="logs-since")
             yield Input(placeholder="filter logs", id="logs-filter")
-        yield RichLog(id="logs-output", wrap=False, highlight=False)
+        with Horizontal(id="logs-body"):
+            yield RichLog(id="logs-output", wrap=False, highlight=False)
+            with Vertical(id="logs-detail-panel"):
+                yield Static("Log Detail", id="logs-detail-title", classes="panel-title")
+                yield Static("(no log selected)", id="logs-detail-content")
         yield Footer()
 
     def on_mount(self) -> None:
         self.query_one("#logs-output", RichLog).focus()
+        self.query_one("#logs-detail-panel", Vertical).display = False
         self.load_logs()
 
     @work(exclusive=True)
@@ -283,11 +270,10 @@ class LogsScreen(Screen[None]):
         self._render_logs()
 
     def action_open_detail(self) -> None:
-        visible = self._visible_log_indices()
-        if not visible:
-            return
-        index = self.selected_log_index if self.selected_log_index in visible else visible[0]
-        self.app.push_screen(LogDetailScreen(self.log_lines[index]))
+        self.details_visible = not self.details_visible
+        self.query_one("#logs-detail-panel", Vertical).display = self.details_visible
+        if self.details_visible:
+            self._update_detail_panel()
 
     def _render_logs(self) -> None:
         output = self.query_one("#logs-output", RichLog)
@@ -304,6 +290,7 @@ class LogsScreen(Screen[None]):
             output.write("(no matching log lines)")
         else:
             output.write("(no logs)")
+        self._update_detail_panel()
 
     async def stream_logs(self) -> None:
         output = self.query_one("#logs-output", RichLog)
@@ -394,6 +381,20 @@ class LogsScreen(Screen[None]):
         for raw_line in self.log_lines:
             lines.extend([str(line) for line in render_log_line(raw_line, self.mode)])
         return lines
+
+    def _update_detail_panel(self) -> None:
+        if not self.details_visible:
+            return
+        detail = self.query_one("#logs-detail-content", Static)
+        visible = self._visible_log_indices()
+        if not visible:
+            detail.update("(no log selected)")
+            return
+        index = self.selected_log_index if self.selected_log_index in visible else visible[0]
+        raw_line = self.log_lines[index]
+        pretty = "\n".join(format_log_line(raw_line, LogMode.PRETTY))
+        parsed = parse_log_line(raw_line)
+        detail.update(f"raw:\n{parsed.raw}\n\npretty:\n{pretty}")
 
     def _visible_log_indices(self) -> list[int]:
         visible: list[int] = []

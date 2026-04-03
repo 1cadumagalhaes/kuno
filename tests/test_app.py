@@ -2,7 +2,7 @@ import pytest
 from textual.containers import Vertical
 from textual.widgets import Button, DataTable, Input, RichLog, Static
 
-from kuno.app import AboutScreen, KunoApp, LogDetailScreen, LogsScreen
+from kuno.app import AboutScreen, KunoApp, LogsScreen
 from kuno.k8s.config import UnknownContextError
 from kuno.models import (
     ContainerSummary,
@@ -933,7 +933,7 @@ async def test_logs_screen_refetches_with_since(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_logs_screen_opens_line_detail(monkeypatch) -> None:
+async def test_logs_screen_toggles_line_detail_panel(monkeypatch) -> None:
     def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
         return startup_config
 
@@ -991,9 +991,13 @@ async def test_logs_screen_opens_line_detail(monkeypatch) -> None:
         app.execute_command("logs")
         await pilot.pause()
         assert isinstance(app.screen, LogsScreen)
+        detail_panel = app.screen.query_one("#logs-detail-panel", Vertical)
+        detail_content = app.screen.query_one("#logs-detail-content", Static)
+        assert detail_panel.display is False
         await pilot.press("d")
         await pilot.pause()
-        assert isinstance(app.screen, LogDetailScreen)
+        assert detail_panel.display is True
+        assert "pretty:" in str(detail_content.content)
 
 
 @pytest.mark.asyncio

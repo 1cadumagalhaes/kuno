@@ -136,6 +136,20 @@ LogsScreen {
     height: 1fr;
     margin: 1;
     padding: 0 1;
+    width: 2fr;
+}
+
+#logs-detail-panel {
+    border: round $accent;
+    display: none;
+    height: 1fr;
+    margin: 1 1 1 0;
+    width: 1fr;
+}
+
+#logs-detail-content {
+    height: 1fr;
+    padding: 1;
 }
 
 #confirm-dialog {
