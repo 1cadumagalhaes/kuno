@@ -5,6 +5,8 @@ from contextlib import suppress
 from textwrap import wrap as text_wrap
 from typing import ClassVar
 
+from rich.style import Style
+from rich.text import Text
 from textual import events, work
 from textual.app import App, ComposeResult, SystemCommand
 from textual.containers import Horizontal, Vertical
@@ -44,7 +46,7 @@ from kuno.k8s.resources import (
     stream_pod_logs,
     truncate_for_table,
 )
-from kuno.logs import LogMode, render_log_line
+from kuno.logs import LogMode, format_log_line, parse_log_line, render_log_line
 from kuno.models import (
     ContainerSummary,
     ContextSummary,
@@ -93,16 +95,38 @@ class ConfirmActionScreen(ModalScreen[bool]):
         self.dismiss(event.button.id == "confirm-yes")
 
 
+class LogDetailScreen(ModalScreen[None]):
+    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("escape", "close", "Close")]
+
+    def __init__(self, line: str) -> None:
+        super().__init__()
+        self.line = line
+
+    def compose(self) -> ComposeResult:
+        pretty = "\n".join(format_log_line(self.line, LogMode.PRETTY))
+        parsed = parse_log_line(self.line)
+        yield Static(
+            f"Log Detail\n\nraw:\n{parsed.raw}\n\npretty:\n{pretty}",
+            id="log-detail-panel",
+        )
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
 class LogsScreen(Screen[None]):
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("escape", "close", "Back"),
+        ("enter", "open_detail", "Detail"),
         ("y", "copy_logs", "Copy"),
         ("f", "toggle_follow", "Follow"),
+        ("down", "next_line", "Next"),
         ("m", "cycle_mode", "Mode"),
         ("s", "focus_since", "Since"),
         ("slash", "focus_filter", "Filter"),
         ("r", "reload", "Reload"),
         ("t", "toggle_timestamps", "Timestamps"),
+        ("up", "previous_line", "Prev"),
         ("ctrl+l", "clear_filter", "Clear Filter"),
         ("w", "toggle_wrap", "Wrap"),
     ]
@@ -124,6 +148,7 @@ class LogsScreen(Screen[None]):
         self.namespace = namespace
         self.pod_name = pod_name
         self.container_name = container_name
+        self.selected_log_index = 0
         self.since_text = ""
         self.stream_worker = None
         self.timestamps_enabled = False
@@ -143,6 +168,7 @@ class LogsScreen(Screen[None]):
             yield Input(placeholder="since (e.g. 5m, 1h)", id="logs-since")
             yield Input(placeholder="filter logs", id="logs-filter")
         yield RichLog(id="logs-output", wrap=False, highlight=False)
+        yield Footer()
 
     def on_mount(self) -> None:
         self.query_one("#logs-output", RichLog).focus()
@@ -167,6 +193,10 @@ class LogsScreen(Screen[None]):
             return
 
         self.log_lines = logs.splitlines() if logs else []
+        if self.log_lines:
+            self.selected_log_index = min(self.selected_log_index, len(self.log_lines) - 1)
+        else:
+            self.selected_log_index = 0
         self._render_logs()
 
     def on_input_changed(self, event: Input.Changed) -> None:
@@ -232,12 +262,39 @@ class LogsScreen(Screen[None]):
         self.app.copy_to_clipboard("\n".join(self._display_lines_plain()))
         self.notify("Copied logs")
 
+    def action_next_line(self) -> None:
+        visible = self._visible_log_indices()
+        if not visible:
+            return
+        current = (
+            visible.index(self.selected_log_index) if self.selected_log_index in visible else 0
+        )
+        self.selected_log_index = visible[min(current + 1, len(visible) - 1)]
+        self._render_logs()
+
+    def action_previous_line(self) -> None:
+        visible = self._visible_log_indices()
+        if not visible:
+            return
+        current = (
+            visible.index(self.selected_log_index) if self.selected_log_index in visible else 0
+        )
+        self.selected_log_index = visible[max(current - 1, 0)]
+        self._render_logs()
+
+    def action_open_detail(self) -> None:
+        visible = self._visible_log_indices()
+        if not visible:
+            return
+        index = self.selected_log_index if self.selected_log_index in visible else visible[0]
+        self.app.push_screen(LogDetailScreen(self.log_lines[index]))
+
     def _render_logs(self) -> None:
         output = self.query_one("#logs-output", RichLog)
         output.clear()
         output.auto_scroll = self.follow_enabled
         output.wrap = self.wrap_enabled
-        lines = self._display_lines()
+        lines = self._display_entries()
         if self.wrap_enabled:
             lines = self._wrap_lines(lines)
         if lines:
@@ -261,11 +318,12 @@ class LogsScreen(Screen[None]):
                     timestamps=self.timestamps_enabled,
                 ):
                     self.log_lines.append(line)
+                    self.selected_log_index = len(self.log_lines) - 1
                     if self.filter_text and self.filter_text not in line:
                         continue
-                    rendered = render_log_line(line, self.mode)
+                    rendered = self._entry_renderables(line, selected=True)
                     if self.wrap_enabled:
-                        for wrapped_line in self._wrap_lines(list(rendered)):
+                        for wrapped_line in self._wrap_lines(rendered):
                             output.write(wrapped_line)
                     else:
                         for item in rendered:
@@ -321,15 +379,14 @@ class LogsScreen(Screen[None]):
         self._stop_streaming()
         self.app.pop_screen()
 
-    def _display_lines(self) -> list[object]:
+    def _display_entries(self) -> list[object]:
         lines: list[object] = []
-        for raw_line in self.log_lines:
-            formatted_lines = render_log_line(raw_line, self.mode)
-            if self.filter_text:
-                formatted_lines = [
-                    line for line in formatted_lines if self.filter_text in str(line)
-                ]
-            lines.extend(formatted_lines)
+        for index in self._visible_log_indices():
+            lines.extend(
+                self._entry_renderables(
+                    self.log_lines[index], selected=index == self.selected_log_index
+                )
+            )
         return lines
 
     def _display_lines_plain(self) -> list[str]:
@@ -337,6 +394,32 @@ class LogsScreen(Screen[None]):
         for raw_line in self.log_lines:
             lines.extend([str(line) for line in render_log_line(raw_line, self.mode)])
         return lines
+
+    def _visible_log_indices(self) -> list[int]:
+        visible: list[int] = []
+        for index, raw_line in enumerate(self.log_lines):
+            rendered = render_log_line(raw_line, self.mode)
+            if self.filter_text and not any(self.filter_text in str(line) for line in rendered):
+                continue
+            visible.append(index)
+        if visible and self.selected_log_index not in visible:
+            self.selected_log_index = visible[0]
+        return visible
+
+    def _entry_renderables(self, raw_line: str, *, selected: bool) -> list[object]:
+        rendered: list[object] = []
+        rendered.extend(render_log_line(raw_line, self.mode))
+        if not selected:
+            return rendered
+        highlighted: list[object] = []
+        for line in rendered:
+            if isinstance(line, Text):
+                text = line.copy()
+                text.stylize(Style(bgcolor="grey23"))
+                highlighted.append(text)
+            else:
+                highlighted.append(Text(str(line), style=Style(bgcolor="grey23")))
+        return highlighted
 
 
 class KunoApp(App[None]):
