@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from rich.style import Style
+from rich.text import Text
+
 
 class LogMode(StrEnum):
     RAW = "raw"
@@ -94,6 +97,19 @@ def format_log_line(line: str, mode: LogMode) -> list[str]:
     return [_structured_line(parsed)]
 
 
+def render_log_line(line: str, mode: LogMode) -> list[Text | str]:
+    parsed = parse_log_line(line)
+    if mode is LogMode.RAW:
+        return [parsed.raw]
+    if mode is LogMode.PRETTY:
+        if parsed.data is None:
+            return [parsed.raw]
+        lines: list[Text | str] = []
+        lines.extend(json.dumps(parsed.data, indent=2, sort_keys=True).splitlines())
+        return lines
+    return [_structured_text(parsed)]
+
+
 def _structured_line(parsed: ParsedLogLine) -> str:
     if parsed.data is None:
         return parsed.raw
@@ -110,6 +126,41 @@ def _structured_line(parsed: ParsedLogLine) -> str:
     field_parts = [f"{key}={_stringify(value)}" for key, value in parsed.fields.items()]
     parts.extend(field_parts)
     return " ".join(part for part in parts if part)
+
+
+def _structured_text(parsed: ParsedLogLine) -> Text | str:
+    if parsed.data is None:
+        return parsed.raw
+
+    text = Text()
+    if parsed.timestamp:
+        text.append(parsed.timestamp, style=Style(dim=True))
+        text.append(" ")
+    if parsed.level:
+        text.append(parsed.level.upper(), style=_level_style(parsed.level))
+        text.append(" ")
+    if parsed.category:
+        text.append(parsed.category, style="cyan")
+        text.append(" ")
+    if parsed.message:
+        text.append(parsed.message)
+    for key, value in parsed.fields.items():
+        if text.plain:
+            text.append(" ")
+        text.append(f"{key}=", style="magenta")
+        text.append(_stringify(value), style="yellow")
+    return text
+
+
+def _level_style(level: str) -> str:
+    value = level.lower()
+    if value in {"error", "err", "fatal", "critical"}:
+        return "bold red"
+    if value in {"warn", "warning"}:
+        return "bold yellow"
+    if value == "debug":
+        return "blue"
+    return "green"
 
 
 def _extract_first_string(data: dict[str, Any], *keys: str) -> str | None:

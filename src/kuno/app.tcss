@@ -2,16 +2,27 @@ Screen {
     layout: vertical;
 }
 
+#summary-bar {
+    height: auto;
+    margin: 1 1 0 1;
+}
+
 #startup-summary {
     border: round $accent;
     height: auto;
-    margin: 1 1 0 1;
     padding: 0 1;
+    width: 1fr;
+}
+
+#back-button {
+    display: none;
+    margin-left: 1;
+    width: auto;
 }
 
 #explorer {
     height: 1fr;
-    margin: 1;
+    margin: 0 1 1 1;
 }
 
 #pod-panel {
@@ -102,10 +113,22 @@ LogsScreen {
     padding: 0 1;
 }
 
+#logs-controls {
+    height: 3;
+    margin: 1 1 0 1;
+}
+
+#logs-since {
+    border: round $accent;
+    height: 3;
+    width: 24;
+}
+
 #logs-filter {
     border: round $accent;
     height: 3;
-    margin: 1 1 0 1;
+    margin-left: 1;
+    width: 1fr;
 }
 
 #logs-output {

@@ -37,6 +37,7 @@ from kuno.k8s.resources import (
     secret_summary_from_api_item,
     service_summary_from_api_item,
     statefulset_summary_from_api_item,
+    stream_pod_logs,
     truncate_for_table,
 )
 from kuno.models import (
@@ -843,6 +844,44 @@ async def test_read_pod_logs_reads_selected_pod_and_container() -> None:
         await read_pod_logs(kube_client, "payments", "api-1", container_name="api")
         == "line-1\nline-2"
     )
+
+
+@pytest.mark.asyncio
+async def test_stream_pod_logs_yields_lines() -> None:
+    class FakeContent:
+        def __init__(self) -> None:
+            self.lines = [b"line-1\n", b"line-2\n", b""]
+
+        async def readline(self) -> bytes:
+            return self.lines.pop(0)
+
+    class FakeResponse:
+        def __init__(self) -> None:
+            self.content = FakeContent()
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    response = FakeResponse()
+
+    class FakeCoreV1:
+        async def read_namespaced_pod_log(self, name: str, namespace: str, **kwargs):
+            assert name == "api-1"
+            assert namespace == "payments"
+            assert kwargs["follow"] is True
+            assert kwargs["_preload_content"] is False
+            return response
+
+    kube_client = SimpleNamespace(core_v1=FakeCoreV1())
+
+    lines = [
+        line
+        async for line in stream_pod_logs(kube_client, "payments", "api-1", container_name="api")
+    ]
+
+    assert lines == ["line-1", "line-2"]
+    assert response.closed is True
 
 
 def test_parse_since_duration_supports_kubectl_style_values() -> None:

@@ -1,6 +1,6 @@
 import pytest
 from textual.containers import Vertical
-from textual.widgets import Button, DataTable, Input, Log, Static
+from textual.widgets import Button, DataTable, Input, RichLog, Static
 
 from kuno.app import AboutScreen, KunoApp, LogsScreen
 from kuno.k8s.config import UnknownContextError
@@ -20,23 +20,11 @@ from kuno.models import (
 
 
 @pytest.mark.asyncio
-async def test_app_starts_in_contexts_view(monkeypatch) -> None:
+async def test_app_starts_in_pods_view(monkeypatch) -> None:
     def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
         return startup_config
 
     monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
-    monkeypatch.setattr(
-        "kuno.app.load_context_summaries",
-        lambda: [
-            ContextSummary(
-                name="prod",
-                cluster="prod-cluster",
-                user="prod-user",
-                namespace="payments",
-                current="*",
-            )
-        ],
-    )
 
     class FakeKubeClient:
         def __init__(self, context: str) -> None:
@@ -51,8 +39,23 @@ async def test_app_starts_in_contexts_view(monkeypatch) -> None:
     async def fake_list_namespaces(kube_client: FakeKubeClient) -> list[str]:
         return ["payments"]
 
+    async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
+        return [
+            PodSummary(
+                name="api-1",
+                ready="1/1",
+                status="Running",
+                restarts=0,
+                age="1m",
+                containers="api",
+                cpu="100m",
+                memory="64Mi",
+            )
+        ]
+
     monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
     monkeypatch.setattr("kuno.app.list_namespaces", fake_list_namespaces)
+    monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
 
     app = KunoApp(StartupConfig(context="prod", namespace="payments"))
 
@@ -60,8 +63,8 @@ async def test_app_starts_in_contexts_view(monkeypatch) -> None:
         await pilot.pause()
         table_title = app.query_one("#table-title", Static)
         pod_table = app.query_one("#pod-table", DataTable)
-        assert app.current_view is ExplorerView.CONTEXTS
-        assert table_title.content == "Contexts"
+        assert app.current_view is ExplorerView.PODS
+        assert table_title.content == "Pods"
         assert pod_table.row_count == 1
 
 
@@ -108,6 +111,7 @@ async def test_app_selecting_context_opens_namespaces(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_namespace_summaries", fake_list_namespace_summaries)
 
     app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app.current_view = ExplorerView.CONTEXTS
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -176,6 +180,7 @@ async def test_app_selecting_namespace_opens_pods(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
 
     app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app.current_view = ExplorerView.CONTEXTS
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -379,6 +384,7 @@ async def test_app_can_go_back_from_pods_to_namespaces(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
 
     app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app.current_view = ExplorerView.CONTEXTS
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -710,10 +716,10 @@ async def test_logs_screen_filters_lines(monkeypatch) -> None:
         await pilot.pause()
         assert isinstance(app.screen, LogsScreen)
         log_filter = app.screen.query_one("#logs-filter", Input)
-        output = app.screen.query_one("#logs-output", Log)
+        output = app.screen.query_one("#logs-output", RichLog)
         log_filter.value = "error"
         await pilot.pause()
-        assert output.line_count == 1
+        assert len(output.lines) == 1
 
 
 @pytest.mark.asyncio
@@ -2100,7 +2106,7 @@ async def test_app_exposes_clean_system_commands(monkeypatch) -> None:
         assert "Contexts" in titles
         assert "Namespaces" in titles
         assert "Pods" in titles
-        assert "Refresh contexts" in titles
+        assert "Refresh pods" in titles
         assert "Quit" in titles
         assert all("Maximize" not in title for title in titles)
 

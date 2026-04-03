@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from kubernetes_asyncio.client import AppsV1Api, CoreV1Api
 
@@ -66,6 +67,41 @@ async def read_pod_logs(
         kwargs["container"] = container_name
     result = await kube_client.core_v1.read_namespaced_pod_log(pod_name, namespace, **kwargs)
     return result if isinstance(result, str) else ""
+
+
+async def stream_pod_logs(
+    kube_client: HasCoreV1,
+    namespace: str,
+    pod_name: str,
+    *,
+    container_name: str | None = None,
+    since_seconds: int | None = None,
+    timestamps: bool = False,
+) -> AsyncIterator[str]:
+    if kube_client.core_v1 is None:
+        raise RuntimeError("Kubernetes client is not connected")
+
+    kwargs: dict[str, Any] = {
+        "follow": True,
+        "timestamps": timestamps,
+        "_preload_content": False,
+    }
+    if since_seconds is not None:
+        kwargs["since_seconds"] = since_seconds
+    if container_name is not None:
+        kwargs["container"] = container_name
+
+    response = cast(
+        Any, await kube_client.core_v1.read_namespaced_pod_log(pod_name, namespace, **kwargs)
+    )
+    try:
+        while True:
+            chunk = await response.content.readline()
+            if not chunk:
+                break
+            yield chunk.decode("utf-8", errors="replace").rstrip("\n")
+    finally:
+        response.close()
 
 
 def parse_since_duration(value: str) -> int | None:
