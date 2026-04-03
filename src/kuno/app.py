@@ -8,9 +8,10 @@ from textual import events, work
 from textual.app import App, ComposeResult, SystemCommand
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import DataTable, Footer, Input, Static
+from textual.widgets import Button, DataTable, Footer, Input, Static
 
 from kuno.commands import ParsedCommand, parse_command, suggest_commands
+from kuno.k8s.actions import delete_resource, restart_resource
 from kuno.k8s.client import KubeClient
 from kuno.k8s.config import (
     UnknownContextError,
@@ -67,6 +68,24 @@ class AboutScreen(ModalScreen[None]):
 
     def action_close(self) -> None:
         self.dismiss(None)
+
+
+class ConfirmActionScreen(ModalScreen[bool]):
+    def __init__(self, title: str, message: str) -> None:
+        super().__init__()
+        self.dialog_title = title
+        self.message = message
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="confirm-dialog"):
+            yield Static(self.dialog_title, id="confirm-title")
+            yield Static(self.message, id="confirm-message")
+            with Horizontal(id="confirm-actions"):
+                yield Button("Confirm", id="confirm-yes", variant="error")
+                yield Button("Cancel", id="confirm-no")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id == "confirm-yes")
 
 
 class KunoApp(App[None]):
@@ -525,6 +544,12 @@ class KunoApp(App[None]):
             "Show containers for the selected pod",
             self._command_containers,
         )
+        if self._can_delete_selected():
+            yield SystemCommand(
+                "Delete selected",
+                f"Delete the selected {self._view_singular()}",
+                self._command_delete,
+            )
         yield SystemCommand(
             "Contexts",
             "Show kube contexts in the main table",
@@ -565,6 +590,12 @@ class KunoApp(App[None]):
             f"Reload the current {self.current_view.value} table",
             self._command_refresh,
         )
+        if self._can_restart_selected():
+            yield SystemCommand(
+                "Restart selected",
+                f"Restart the selected {self._view_singular()}",
+                self._command_restart,
+            )
         if self.details_visible:
             yield SystemCommand(
                 "Hide details",
@@ -594,6 +625,8 @@ class KunoApp(App[None]):
                 self._command_containers()
             case "contexts":
                 self._command_contexts()
+            case "del":
+                self._command_delete()
             case "keys":
                 self._command_keys()
             case "deploy":
@@ -606,6 +639,8 @@ class KunoApp(App[None]):
                 self._command_pvc()
             case "refresh":
                 self._command_refresh()
+            case "restart":
+                self._command_restart()
             case "secrets":
                 self._command_secrets()
             case "svc":
@@ -628,7 +663,7 @@ class KunoApp(App[None]):
                 self._command_context(command.argument)
             case "help":
                 self.notify(
-                    "Commands: about, contexts, namespaces, pods, deploy, sts, svc, pvc, secrets, refresh, details, hide-details, theme [name], ns <ns>, ctx <ctx>"
+                    "Commands: about, contexts, namespaces, pods, containers, deploy, sts, svc, pvc, secrets, refresh, details, hide-details, del, restart, theme [name], ns <ns>, ctx <ctx>"
                 )
             case _:
                 self.notify(f"Unknown command: {command.name}", severity="error")
@@ -729,6 +764,118 @@ class KunoApp(App[None]):
         else:
             self.action_show_help_panel()
 
+    def _command_delete(self) -> None:
+        selection = self._selected_resource_name()
+        target = self._require_target()
+        if selection is None:
+            self.notify("No resource selected", severity="warning")
+            return
+        if not self._can_delete_selected():
+            self.notify(
+                f"Delete is not supported for {self.current_view.value}", severity="warning"
+            )
+            return
+
+        resource_view = self.current_view
+        namespace_label = target.namespace or "default"
+        self.push_screen(
+            ConfirmActionScreen(
+                "Delete resource",
+                f"Delete {resource_view.value.rstrip('s')}/{selection} in namespace {namespace_label}?",
+            ),
+            callback=lambda confirmed: self._handle_delete_confirmation(
+                confirmed, resource_view, selection, target.namespace
+            ),
+        )
+
+    def _handle_delete_confirmation(
+        self,
+        confirmed: bool | None,
+        view: ExplorerView,
+        name: str,
+        namespace: str | None,
+    ) -> None:
+        if not confirmed:
+            return
+        if namespace is None:
+            self.notify("Namespace is not resolved", severity="error")
+            return
+        self.delete_selected_resource(view=view, name=name, namespace=namespace)
+
+    @work(exclusive=True)
+    async def delete_selected_resource(
+        self, *, view: ExplorerView, name: str, namespace: str
+    ) -> None:
+        target = self._require_target()
+        if target.context is None:
+            self.notify("Context is not resolved", severity="error")
+            return
+        try:
+            async with KubeClient(context=target.context) as kube_client:
+                await delete_resource(kube_client, view=view, name=name, namespace=namespace)
+        except Exception as error:
+            self.notify(str(error), severity="error")
+            return
+
+        self.notify(f"Deleted {view.value.rstrip('s')}/{name}")
+        self.refresh_current_view()
+
+    def _command_restart(self) -> None:
+        selection = self._selected_resource_name()
+        target = self._require_target()
+        if selection is None:
+            self.notify("No resource selected", severity="warning")
+            return
+        if not self._can_restart_selected():
+            self.notify(
+                f"Restart is not supported for {self.current_view.value}", severity="warning"
+            )
+            return
+
+        resource_view = self.current_view
+        namespace_label = target.namespace or "default"
+        self.push_screen(
+            ConfirmActionScreen(
+                "Restart resource",
+                f"Restart {resource_view.value.rstrip('s')}/{selection} in namespace {namespace_label}?",
+            ),
+            callback=lambda confirmed: self._handle_restart_confirmation(
+                confirmed, resource_view, selection, target.namespace
+            ),
+        )
+
+    def _handle_restart_confirmation(
+        self,
+        confirmed: bool | None,
+        view: ExplorerView,
+        name: str,
+        namespace: str | None,
+    ) -> None:
+        if not confirmed:
+            return
+        if namespace is None:
+            self.notify("Namespace is not resolved", severity="error")
+            return
+        self.restart_selected_resource(view=view, name=name, namespace=namespace)
+
+    @work(exclusive=True)
+    async def restart_selected_resource(
+        self, *, view: ExplorerView, name: str, namespace: str
+    ) -> None:
+        target = self._require_target()
+        if target.context is None:
+            self.notify("Context is not resolved", severity="error")
+            return
+        try:
+            async with KubeClient(context=target.context) as kube_client:
+                await restart_resource(kube_client, view=view, name=name, namespace=namespace)
+        except Exception as error:
+            self.notify(str(error), severity="error")
+            return
+
+        self.notify(f"Restarted {view.value.rstrip('s')}/{name}")
+        self.refresh_current_view()
+
     def _command_refresh(self) -> None:
         self.refresh_current_view()
         self.notify(f"Refreshing {self.current_view.value}")
@@ -775,6 +922,29 @@ class KunoApp(App[None]):
         if self.resolved_startup_config is None:
             raise ValueError("Startup target is not resolved")
         return self.resolved_startup_config
+
+    def _selected_resource_name(self) -> str | None:
+        pod_table = self.query_one("#pod-table", DataTable)
+        cursor_row = pod_table.cursor_row
+        rows = self._current_rows()
+        if cursor_row is None or cursor_row < 0 or cursor_row >= len(rows):
+            return None
+
+        row = rows[cursor_row]
+        return getattr(row, "name", None) if isinstance(getattr(row, "name", None), str) else None
+
+    def _can_delete_selected(self) -> bool:
+        return self.current_view in {
+            ExplorerView.PODS,
+            ExplorerView.DEPLOYMENTS,
+            ExplorerView.STATEFULSETS,
+            ExplorerView.SERVICES,
+            ExplorerView.PVC,
+            ExplorerView.SECRETS,
+        }
+
+    def _can_restart_selected(self) -> bool:
+        return self.current_view in {ExplorerView.DEPLOYMENTS, ExplorerView.STATEFULSETS}
 
     def _update_command_suggestions(self, raw: str) -> None:
         self.command_suggestions = suggest_commands(

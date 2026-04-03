@@ -325,6 +325,98 @@ async def test_app_renders_container_details(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_app_delete_command_opens_confirmation_for_pod(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
+        return [
+            PodSummary(
+                name="api-1",
+                ready="1/1",
+                status="Running",
+                restarts=0,
+                age="1m",
+                containers="api",
+                cpu="100m",
+                memory="64Mi",
+            )
+        ]
+
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app.current_view = ExplorerView.PODS
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.execute_command("del")
+        await pilot.pause()
+        confirm_title = app.screen.query_one("#confirm-title", Static)
+        assert str(confirm_title.content) == "Delete resource"
+
+
+@pytest.mark.asyncio
+async def test_app_restart_command_opens_confirmation_for_deployment(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_deployments(
+        kube_client: FakeKubeClient, namespace: str
+    ) -> list[DeploymentSummary]:
+        return [
+            DeploymentSummary(
+                name="api",
+                ready="1/1",
+                up_to_date=1,
+                available=1,
+                age="1m",
+                containers="api",
+                cpu="100m",
+                memory="64Mi",
+            )
+        ]
+
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_deployments", fake_list_deployments)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app.current_view = ExplorerView.DEPLOYMENTS
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.execute_command("restart")
+        await pilot.pause()
+        confirm_title = app.screen.query_one("#confirm-title", Static)
+        assert str(confirm_title.content) == "Restart resource"
+
+
+@pytest.mark.asyncio
 async def test_app_renders_startup_summary(monkeypatch) -> None:
     def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
         return startup_config

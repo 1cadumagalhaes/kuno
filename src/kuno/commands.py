@@ -6,6 +6,7 @@ COMMANDS = (
     "about",
     "containers",
     "contexts",
+    "del",
     "deploy",
     "keys",
     "namespaces",
@@ -17,6 +18,7 @@ COMMANDS = (
     "sts",
     "details",
     "hide-details",
+    "restart",
     "theme",
     "ns",
     "ctx",
@@ -47,6 +49,7 @@ def parse_command(raw: str) -> ParsedCommand:
         "about",
         "containers",
         "contexts",
+        "del",
         "deploy",
         "keys",
         "namespaces",
@@ -58,6 +61,7 @@ def parse_command(raw: str) -> ParsedCommand:
         "svc",
         "details",
         "hide-details",
+        "restart",
         "help",
     }:
         if argument is not None:
