@@ -8,6 +8,7 @@ COMMANDS = (
     "keys",
     "pods",
     "refresh",
+    "sts",
     "details",
     "hide-details",
     "theme",
@@ -36,7 +37,17 @@ def parse_command(raw: str) -> ParsedCommand:
     name = parts[0].lower()
     argument = parts[1].strip() if len(parts) == 2 else None
 
-    if name in {"about", "deploy", "keys", "pods", "refresh", "details", "hide-details", "help"}:
+    if name in {
+        "about",
+        "deploy",
+        "keys",
+        "pods",
+        "refresh",
+        "sts",
+        "details",
+        "hide-details",
+        "help",
+    }:
         if argument is not None:
             raise ValueError(f"Command '{name}' does not take arguments")
         return ParsedCommand(name=name)

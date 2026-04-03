@@ -4,7 +4,13 @@ from textual.widgets import DataTable, Input, Static
 
 from kuno.app import AboutScreen, KunoApp
 from kuno.k8s.config import UnknownContextError
-from kuno.models import DeploymentSummary, ExplorerView, PodSummary, StartupConfig
+from kuno.models import (
+    DeploymentSummary,
+    ExplorerView,
+    PodSummary,
+    StartupConfig,
+    StatefulSetSummary,
+)
 
 
 @pytest.mark.asyncio
@@ -599,6 +605,128 @@ async def test_app_renders_deployment_details(monkeypatch) -> None:
         assert (
             pod_details.content
             == "deployment\nname: api\nready: 2/3\nup-to-date: 3\navailable: 2\nage: 1h\ncontainers: api,sidecar\ncpu: 750m\nmemory: 384Mi"
+        )
+
+
+@pytest.mark.asyncio
+async def test_app_switches_to_statefulsets_view(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
+        return []
+
+    async def fake_list_deployments(
+        kube_client: FakeKubeClient, namespace: str
+    ) -> list[DeploymentSummary]:
+        return []
+
+    async def fake_list_statefulsets(
+        kube_client: FakeKubeClient, namespace: str
+    ) -> list[StatefulSetSummary]:
+        assert kube_client.context == "prod"
+        assert namespace == "payments"
+        return [
+            StatefulSetSummary(
+                name="postgres",
+                ready="2/3",
+                updated=2,
+                current=3,
+                age="1h",
+                containers="postgres",
+                cpu="500m",
+                memory="1Gi",
+            )
+        ]
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
+    monkeypatch.setattr("kuno.app.list_deployments", fake_list_deployments)
+    monkeypatch.setattr("kuno.app.list_statefulsets", fake_list_statefulsets)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.execute_command("sts")
+        await pilot.pause()
+        table_title = app.query_one("#table-title", Static)
+        details_title = app.query_one("#details-title", Static)
+        pod_table = app.query_one("#pod-table", DataTable)
+        assert app.current_view is ExplorerView.STATEFULSETS
+        assert table_title.content == "StatefulSets"
+        assert details_title.content == "StatefulSet Details"
+        assert pod_table.row_count == 1
+
+
+@pytest.mark.asyncio
+async def test_app_renders_statefulset_details(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
+        return []
+
+    async def fake_list_deployments(
+        kube_client: FakeKubeClient, namespace: str
+    ) -> list[DeploymentSummary]:
+        return []
+
+    async def fake_list_statefulsets(
+        kube_client: FakeKubeClient, namespace: str
+    ) -> list[StatefulSetSummary]:
+        return [
+            StatefulSetSummary(
+                name="postgres",
+                ready="2/3",
+                updated=2,
+                current=3,
+                age="1h",
+                containers="postgres",
+                cpu="500m",
+                memory="1Gi",
+            )
+        ]
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
+    monkeypatch.setattr("kuno.app.list_deployments", fake_list_deployments)
+    monkeypatch.setattr("kuno.app.list_statefulsets", fake_list_statefulsets)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.execute_command("sts")
+        await pilot.pause()
+        await pilot.press("d")
+        await pilot.pause()
+        pod_details = app.query_one("#pod-details", Static)
+        assert (
+            pod_details.content
+            == "statefulset\nname: postgres\nready: 2/3\nupdated: 2\ncurrent: 3\nage: 1h\ncontainers: postgres\ncpu: 500m\nmemory: 1Gi"
         )
 
 

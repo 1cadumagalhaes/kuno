@@ -23,6 +23,7 @@ class PodSummary:
 class ExplorerView(StrEnum):
     PODS = "pods"
     DEPLOYMENTS = "deployments"
+    STATEFULSETS = "statefulsets"
 
 
 @dataclass(slots=True)
@@ -31,6 +32,18 @@ class DeploymentSummary:
     ready: str
     up_to_date: int
     available: int
+    age: str
+    containers: str
+    cpu: str
+    memory: str
+
+
+@dataclass(slots=True)
+class StatefulSetSummary:
+    name: str
+    ready: str
+    updated: int
+    current: int
     age: str
     containers: str
     cpu: str

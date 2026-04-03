@@ -12,13 +12,16 @@ from kuno.k8s.resources import (
     list_deployments,
     list_namespaces,
     list_pods,
+    list_statefulsets,
     pod_ready,
     pod_restarts,
     pod_summary_from_api_item,
     render_pod_details,
+    render_statefulset_details,
+    statefulset_summary_from_api_item,
     truncate_for_table,
 )
-from kuno.models import DeploymentSummary, PodSummary
+from kuno.models import DeploymentSummary, PodSummary, StatefulSetSummary
 
 
 def test_pod_summary_from_api_item_reads_operational_fields() -> None:
@@ -306,3 +309,90 @@ async def test_list_deployments_maps_api_items() -> None:
             memory="-",
         )
     ]
+
+
+def test_statefulset_summary_from_api_item_reads_operational_fields() -> None:
+    item = SimpleNamespace(
+        metadata=SimpleNamespace(
+            name="postgres",
+            creation_timestamp=datetime(2026, 4, 2, 11, 0, tzinfo=UTC),
+        ),
+        spec=SimpleNamespace(
+            replicas=3,
+            template=SimpleNamespace(
+                spec=SimpleNamespace(
+                    containers=[
+                        SimpleNamespace(
+                            name="postgres",
+                            resources=SimpleNamespace(requests={"cpu": "500m", "memory": "1Gi"}),
+                        )
+                    ]
+                )
+            ),
+        ),
+        status=SimpleNamespace(ready_replicas=2, updated_replicas=2, current_replicas=3),
+    )
+
+    assert statefulset_summary_from_api_item(
+        item, now=datetime(2026, 4, 2, 12, 0, tzinfo=UTC)
+    ) == StatefulSetSummary(
+        name="postgres",
+        ready="2/3",
+        updated=2,
+        current=3,
+        age="1h",
+        containers="postgres",
+        cpu="500m",
+        memory="1Gi",
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_statefulsets_maps_api_items() -> None:
+    items = [
+        SimpleNamespace(
+            metadata=SimpleNamespace(name="postgres"),
+            spec=SimpleNamespace(
+                replicas=2, template=SimpleNamespace(spec=SimpleNamespace(containers=[]))
+            ),
+            status=SimpleNamespace(ready_replicas=1, updated_replicas=2, current_replicas=1),
+        )
+    ]
+
+    class FakeAppsV1:
+        async def list_namespaced_stateful_set(self, namespace: str) -> SimpleNamespace:
+            assert namespace == "payments"
+            return SimpleNamespace(items=items)
+
+    kube_client = SimpleNamespace(apps_v1=FakeAppsV1())
+
+    assert await list_statefulsets(kube_client, "payments") == [
+        StatefulSetSummary(
+            name="postgres",
+            ready="1/2",
+            updated=2,
+            current=1,
+            age="-",
+            containers="-",
+            cpu="-",
+            memory="-",
+        )
+    ]
+
+
+def test_render_statefulset_details_formats_statefulset() -> None:
+    assert (
+        render_statefulset_details(
+            StatefulSetSummary(
+                name="postgres",
+                ready="2/3",
+                updated=2,
+                current=3,
+                age="1h",
+                containers="postgres",
+                cpu="500m",
+                memory="1Gi",
+            )
+        )
+        == "statefulset\nname: postgres\nready: 2/3\nupdated: 2\ncurrent: 3\nage: 1h\ncontainers: postgres\ncpu: 500m\nmemory: 1Gi"
+    )

@@ -17,11 +17,19 @@ from kuno.k8s.resources import (
     list_deployments,
     list_namespaces,
     list_pods,
+    list_statefulsets,
     render_deployment_details,
     render_pod_details,
+    render_statefulset_details,
     truncate_for_table,
 )
-from kuno.models import DeploymentSummary, ExplorerView, PodSummary, StartupConfig
+from kuno.models import (
+    DeploymentSummary,
+    ExplorerView,
+    PodSummary,
+    StartupConfig,
+    StatefulSetSummary,
+)
 
 
 class AboutScreen(ModalScreen[None]):
@@ -62,6 +70,7 @@ class KunoApp(App[None]):
         self.startup_config = startup_config
         self.deployments: list[DeploymentSummary] = []
         self.pods: list[PodSummary] = []
+        self.statefulsets: list[StatefulSetSummary] = []
         self.resolved_startup_config: StartupConfig | None = None
 
     def compose(self) -> ComposeResult:
@@ -121,14 +130,21 @@ class KunoApp(App[None]):
                 if self.current_view is ExplorerView.PODS:
                     self.pods = await list_pods(kube_client, namespace)
                     self.deployments = []
-                else:
+                    self.statefulsets = []
+                elif self.current_view is ExplorerView.DEPLOYMENTS:
                     self.deployments = await list_deployments(kube_client, namespace)
                     self.pods = []
+                    self.statefulsets = []
+                else:
+                    self.statefulsets = await list_statefulsets(kube_client, namespace)
+                    self.pods = []
+                    self.deployments = []
                 with suppress(Exception):
                     self.available_namespaces = await list_namespaces(kube_client)
         except Exception as error:
             self.pods = []
             self.deployments = []
+            self.statefulsets = []
             await self._render_pod_table()
             pod_details.update(f"{self._view_singular()}\n(error: {error})")
             return
@@ -158,7 +174,7 @@ class KunoApp(App[None]):
                     pod.containers,
                     key=pod.name,
                 )
-        else:
+        elif self.current_view is ExplorerView.DEPLOYMENTS:
             for deployment in self.deployments:
                 pod_table.add_row(
                     truncate_for_table(deployment.name),
@@ -170,6 +186,19 @@ class KunoApp(App[None]):
                     deployment.memory,
                     deployment.containers,
                     key=deployment.name,
+                )
+        else:
+            for statefulset in self.statefulsets:
+                pod_table.add_row(
+                    truncate_for_table(statefulset.name),
+                    statefulset.ready,
+                    str(statefulset.updated),
+                    str(statefulset.current),
+                    statefulset.age,
+                    statefulset.cpu,
+                    statefulset.memory,
+                    statefulset.containers,
+                    key=statefulset.name,
                 )
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
@@ -293,6 +322,11 @@ class KunoApp(App[None]):
             self._command_deployments,
         )
         yield SystemCommand(
+            "StatefulSets",
+            "Show statefulsets in the main table",
+            self._command_statefulsets,
+        )
+        yield SystemCommand(
             f"Refresh {self.current_view.value}",
             f"Reload the current {self.current_view.value} table",
             self._command_refresh,
@@ -330,6 +364,8 @@ class KunoApp(App[None]):
                 self._command_pods()
             case "refresh":
                 self._command_refresh()
+            case "sts":
+                self._command_statefulsets()
             case "details":
                 self._command_show_details()
             case "hide-details":
@@ -363,6 +399,12 @@ class KunoApp(App[None]):
     def _command_deployments(self) -> None:
         if self.current_view is not ExplorerView.DEPLOYMENTS:
             self.current_view = ExplorerView.DEPLOYMENTS
+            self.refresh_current_view()
+        self.query_one("#pod-table", DataTable).focus()
+
+    def _command_statefulsets(self) -> None:
+        if self.current_view is not ExplorerView.STATEFULSETS:
+            self.current_view = ExplorerView.STATEFULSETS
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
 
@@ -470,8 +512,10 @@ class KunoApp(App[None]):
             return
         if self.current_view is ExplorerView.PODS:
             pod_details.update(render_pod_details(self.pods[index]))
-        else:
+        elif self.current_view is ExplorerView.DEPLOYMENTS:
             pod_details.update(render_deployment_details(self.deployments[index]))
+        else:
+            pod_details.update(render_statefulset_details(self.statefulsets[index]))
 
     def _configure_table_columns(self) -> None:
         pod_table = self.query_one("#pod-table", DataTable)
@@ -481,22 +525,44 @@ class KunoApp(App[None]):
             pod_table.add_columns(
                 "Ready", "Status", "Restarts", "Age", "CPU", "Memory", "Containers"
             )
-        else:
+        elif self.current_view is ExplorerView.DEPLOYMENTS:
             pod_table.add_columns(
                 "Ready", "Up-to-date", "Available", "Age", "CPU", "Memory", "Containers"
             )
+        else:
+            pod_table.add_columns(
+                "Ready", "Updated", "Current", "Age", "CPU", "Memory", "Containers"
+            )
 
-    def _current_rows(self) -> list[PodSummary] | list[DeploymentSummary]:
-        return self.pods if self.current_view is ExplorerView.PODS else self.deployments
+    def _current_rows(
+        self,
+    ) -> list[PodSummary] | list[DeploymentSummary] | list[StatefulSetSummary]:
+        if self.current_view is ExplorerView.PODS:
+            return self.pods
+        if self.current_view is ExplorerView.DEPLOYMENTS:
+            return self.deployments
+        return self.statefulsets
 
     def _panel_title(self) -> str:
-        return "Pods" if self.current_view is ExplorerView.PODS else "Deployments"
+        if self.current_view is ExplorerView.PODS:
+            return "Pods"
+        if self.current_view is ExplorerView.DEPLOYMENTS:
+            return "Deployments"
+        return "StatefulSets"
 
     def _details_title(self) -> str:
-        return "Pod Details" if self.current_view is ExplorerView.PODS else "Deployment Details"
+        if self.current_view is ExplorerView.PODS:
+            return "Pod Details"
+        if self.current_view is ExplorerView.DEPLOYMENTS:
+            return "Deployment Details"
+        return "StatefulSet Details"
 
     def _view_singular(self) -> str:
-        return "pod" if self.current_view is ExplorerView.PODS else "deployment"
+        if self.current_view is ExplorerView.PODS:
+            return "pod"
+        if self.current_view is ExplorerView.DEPLOYMENTS:
+            return "deployment"
+        return "statefulset"
 
     def _summary_text(self) -> str:
         startup_config = self.resolved_startup_config or self.startup_config

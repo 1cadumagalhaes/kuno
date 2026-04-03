@@ -6,7 +6,7 @@ from typing import Any, Protocol
 
 from kubernetes_asyncio.client import AppsV1Api, CoreV1Api
 
-from kuno.models import DeploymentSummary, PodSummary
+from kuno.models import DeploymentSummary, PodSummary, StatefulSetSummary
 
 
 class HasCoreV1(Protocol):
@@ -47,6 +47,15 @@ async def list_deployments(kube_client: HasAppsV1, namespace: str) -> list[Deplo
     deployment_list = await kube_client.apps_v1.list_namespaced_deployment(namespace)
     current = datetime.now(UTC)
     return [deployment_summary_from_api_item(item, now=current) for item in deployment_list.items]
+
+
+async def list_statefulsets(kube_client: HasAppsV1, namespace: str) -> list[StatefulSetSummary]:
+    if kube_client.apps_v1 is None:
+        raise RuntimeError("Kubernetes client is not connected")
+
+    statefulset_list = await kube_client.apps_v1.list_namespaced_stateful_set(namespace)
+    current = datetime.now(UTC)
+    return [statefulset_summary_from_api_item(item, now=current) for item in statefulset_list.items]
 
 
 def pod_summary_from_api_item(item: Any, now: datetime | None = None) -> PodSummary:
@@ -100,6 +109,35 @@ def deployment_summary_from_api_item(item: Any, now: datetime | None = None) -> 
         ready=f"{ready}/{desired}",
         up_to_date=updated,
         available=available,
+        age=format_age(creation_timestamp, now=now),
+        containers=container_summary(pod_containers),
+        cpu=format_cpu_requests(pod_containers),
+        memory=format_memory_requests(pod_containers),
+    )
+
+
+def statefulset_summary_from_api_item(item: Any, now: datetime | None = None) -> StatefulSetSummary:
+    metadata = getattr(item, "metadata", None)
+    spec = getattr(item, "spec", None)
+    status = getattr(item, "status", None)
+    name = getattr(metadata, "name", None)
+    creation_timestamp = getattr(metadata, "creation_timestamp", None)
+    containers = getattr(getattr(spec, "template", None), "spec", None)
+    pod_containers = getattr(containers, "containers", None)
+
+    if not isinstance(name, str) or not name:
+        raise ValueError("StatefulSet is missing a valid name")
+
+    desired = int(getattr(spec, "replicas", 0) or 0)
+    ready = int(getattr(status, "ready_replicas", 0) or 0)
+    updated = int(getattr(status, "updated_replicas", 0) or 0)
+    current = int(getattr(status, "current_replicas", 0) or 0)
+
+    return StatefulSetSummary(
+        name=name,
+        ready=f"{ready}/{desired}",
+        updated=updated,
+        current=current,
         age=format_age(creation_timestamp, now=now),
         containers=container_summary(pod_containers),
         cpu=format_cpu_requests(pod_containers),
@@ -250,4 +288,18 @@ def render_deployment_details(deployment: DeploymentSummary) -> str:
         f"containers: {deployment.containers}\n"
         f"cpu: {deployment.cpu}\n"
         f"memory: {deployment.memory}"
+    )
+
+
+def render_statefulset_details(statefulset: StatefulSetSummary) -> str:
+    return (
+        "statefulset\n"
+        f"name: {statefulset.name}\n"
+        f"ready: {statefulset.ready}\n"
+        f"updated: {statefulset.updated}\n"
+        f"current: {statefulset.current}\n"
+        f"age: {statefulset.age}\n"
+        f"containers: {statefulset.containers}\n"
+        f"cpu: {statefulset.cpu}\n"
+        f"memory: {statefulset.memory}"
     )
