@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from contextlib import suppress
+from textwrap import wrap as text_wrap
 from typing import ClassVar
 
 from textual import events, work
@@ -92,9 +93,12 @@ class ConfirmActionScreen(ModalScreen[bool]):
 class LogsScreen(Screen[None]):
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("escape", "close", "Back"),
+        ("f", "toggle_follow", "Follow"),
         ("slash", "focus_filter", "Filter"),
         ("r", "reload", "Reload"),
+        ("t", "toggle_timestamps", "Timestamps"),
         ("ctrl+l", "clear_filter", "Clear Filter"),
+        ("w", "toggle_wrap", "Wrap"),
     ]
 
     def __init__(
@@ -108,10 +112,13 @@ class LogsScreen(Screen[None]):
         super().__init__()
         self.context = context
         self.filter_text = ""
+        self.follow_enabled = False
         self.log_lines: list[str] = []
         self.namespace = namespace
         self.pod_name = pod_name
         self.container_name = container_name
+        self.timestamps_enabled = False
+        self.wrap_enabled = False
 
     def compose(self) -> ComposeResult:
         target = (
@@ -120,7 +127,7 @@ class LogsScreen(Screen[None]):
             else f"{self.pod_name}/{self.container_name}"
         )
         yield Static(
-            f"Logs\ncontext: {self.context}\nnamespace: {self.namespace}\ntarget: {target}",
+            self._title_text(target),
             id="logs-title",
         )
         yield Input(placeholder="filter logs", id="logs-filter")
@@ -128,6 +135,7 @@ class LogsScreen(Screen[None]):
         yield Footer()
 
     def on_mount(self) -> None:
+        self.set_interval(2, self._poll_logs)
         self.load_logs()
 
     @work(exclusive=True)
@@ -141,6 +149,7 @@ class LogsScreen(Screen[None]):
                     self.namespace,
                     self.pod_name,
                     container_name=self.container_name,
+                    timestamps=self.timestamps_enabled,
                 )
         except Exception as error:
             output.write_line(f"error: {error}")
@@ -161,6 +170,20 @@ class LogsScreen(Screen[None]):
     def action_reload(self) -> None:
         self.load_logs()
 
+    def action_toggle_follow(self) -> None:
+        self.follow_enabled = not self.follow_enabled
+        self._update_title()
+
+    def action_toggle_timestamps(self) -> None:
+        self.timestamps_enabled = not self.timestamps_enabled
+        self._update_title()
+        self.load_logs()
+
+    def action_toggle_wrap(self) -> None:
+        self.wrap_enabled = not self.wrap_enabled
+        self._update_title()
+        self._render_logs()
+
     def action_clear_filter(self) -> None:
         log_filter = self.query_one("#logs-filter", Input)
         log_filter.value = ""
@@ -170,16 +193,52 @@ class LogsScreen(Screen[None]):
     def _render_logs(self) -> None:
         output = self.query_one("#logs-output", Log)
         output.clear()
+        output.auto_scroll = self.follow_enabled
         if self.filter_text:
             lines = [line for line in self.log_lines if self.filter_text in line]
         else:
             lines = self.log_lines
+        if self.wrap_enabled:
+            lines = self._wrap_lines(lines)
         if lines:
             output.write_lines(lines)
         elif self.log_lines:
             output.write_line("(no matching log lines)")
         else:
             output.write_line("(no logs)")
+
+    def _poll_logs(self) -> None:
+        if self.follow_enabled:
+            self.load_logs()
+
+    def _wrap_lines(self, lines: list[str]) -> list[str]:
+        output = self.query_one("#logs-output", Log)
+        width = max(output.size.width - 2, 20)
+        wrapped: list[str] = []
+        for line in lines:
+            pieces = text_wrap(line, width=width, replace_whitespace=False, drop_whitespace=False)
+            wrapped.extend(pieces or [""])
+        return wrapped
+
+    def _title_text(self, target: str) -> str:
+        follow = "on" if self.follow_enabled else "off"
+        timestamps = "on" if self.timestamps_enabled else "off"
+        wrap = "on" if self.wrap_enabled else "off"
+        return (
+            "Logs\n"
+            f"context: {self.context}\n"
+            f"namespace: {self.namespace}\n"
+            f"target: {target}\n"
+            f"follow: {follow}  timestamps: {timestamps}  wrap: {wrap}"
+        )
+
+    def _update_title(self) -> None:
+        target = (
+            self.pod_name
+            if self.container_name is None
+            else f"{self.pod_name}/{self.container_name}"
+        )
+        self.query_one("#logs-title", Static).update(self._title_text(target))
 
     def action_close(self) -> None:
         self.app.pop_screen()

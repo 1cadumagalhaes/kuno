@@ -833,7 +833,7 @@ async def test_read_pod_logs_reads_selected_pod_and_container() -> None:
         async def read_namespaced_pod_log(self, name: str, namespace: str, **kwargs) -> str:
             assert name == "api-1"
             assert namespace == "payments"
-            assert kwargs == {"tail_lines": 500, "container": "api"}
+            assert kwargs == {"tail_lines": 500, "timestamps": False, "container": "api"}
             return "line-1\nline-2"
 
     kube_client = SimpleNamespace(core_v1=FakeCoreV1())

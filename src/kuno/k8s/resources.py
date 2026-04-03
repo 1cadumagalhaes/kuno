@@ -53,11 +53,12 @@ async def read_pod_logs(
     *,
     container_name: str | None = None,
     tail_lines: int = 500,
+    timestamps: bool = False,
 ) -> str:
     if kube_client.core_v1 is None:
         raise RuntimeError("Kubernetes client is not connected")
 
-    kwargs: dict[str, Any] = {"tail_lines": tail_lines}
+    kwargs: dict[str, Any] = {"tail_lines": tail_lines, "timestamps": timestamps}
     if container_name is not None:
         kwargs["container"] = container_name
     result = await kube_client.core_v1.read_namespaced_pod_log(pod_name, namespace, **kwargs)
