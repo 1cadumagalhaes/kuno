@@ -22,6 +22,20 @@ async def list_pods(kube_client: HasCoreV1, namespace: str) -> list[PodSummary]:
     return [pod_summary_from_api_item(item, now=current) for item in pod_list.items]
 
 
+async def list_namespaces(kube_client: HasCoreV1) -> list[str]:
+    if kube_client.core_v1 is None:
+        raise RuntimeError("Kubernetes client is not connected")
+
+    namespace_list = await kube_client.core_v1.list_namespace()
+    names = []
+    for item in namespace_list.items:
+        metadata = getattr(item, "metadata", None)
+        name = getattr(metadata, "name", None)
+        if isinstance(name, str) and name:
+            names.append(name)
+    return sorted(names)
+
+
 def pod_summary_from_api_item(item: Any, now: datetime | None = None) -> PodSummary:
     metadata = getattr(item, "metadata", None)
     status = getattr(item, "status", None)

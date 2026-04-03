@@ -24,6 +24,11 @@ def load_startup_targets(
     return resolve_startup_targets(startup_config, contexts, current_context)
 
 
+def load_available_context_names(config_file: str | None = None) -> list[str]:
+    contexts, _ = list_kube_config_contexts(config_file=config_file)
+    return sorted(context_name(context) for context in contexts)
+
+
 def resolve_startup_targets(
     startup_config: StartupConfig,
     contexts: Sequence[ContextEntry],

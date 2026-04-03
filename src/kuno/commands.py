@@ -2,6 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+COMMANDS = (
+    "pods",
+    "refresh",
+    "details",
+    "hide-details",
+    "ns",
+    "ctx",
+    "help",
+)
+
 
 @dataclass(slots=True)
 class ParsedCommand:
@@ -33,3 +43,58 @@ def parse_command(raw: str) -> ParsedCommand:
         return ParsedCommand(name=name, argument=argument)
 
     raise ValueError(f"Unknown command: {name}")
+
+
+def suggest_commands(
+    raw: str,
+    *,
+    contexts: list[str],
+    namespaces: list[str],
+) -> list[str]:
+    text = raw
+    if text.startswith(":"):
+        text = text[1:]
+
+    if not text.strip():
+        return list(COMMANDS)
+
+    if text.endswith(" "):
+        parts = text.strip().split(maxsplit=1)
+        if len(parts) != 1:
+            return []
+        return _argument_suggestions(parts[0].lower(), "", contexts=contexts, namespaces=namespaces)
+
+    parts = text.split(maxsplit=1)
+    if len(parts) == 1:
+        command = parts[0].lower()
+        argument_suggestions = _argument_suggestions(
+            command,
+            "",
+            contexts=contexts,
+            namespaces=namespaces,
+        )
+        if argument_suggestions:
+            return argument_suggestions
+        return [candidate for candidate in COMMANDS if candidate.startswith(command)]
+
+    name = parts[0].lower()
+    argument = parts[1]
+    return _argument_suggestions(name, argument, contexts=contexts, namespaces=namespaces)
+
+
+def _argument_suggestions(
+    name: str,
+    argument: str,
+    *,
+    contexts: list[str],
+    namespaces: list[str],
+) -> list[str]:
+    source: list[str]
+    if name == "ctx":
+        source = contexts
+    elif name == "ns":
+        source = namespaces
+    else:
+        return []
+
+    return [f"{name} {candidate}" for candidate in source if candidate.startswith(argument)]

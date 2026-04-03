@@ -8,6 +8,7 @@ from kuno.k8s.resources import (
     format_age,
     format_cpu_requests,
     format_memory_requests,
+    list_namespaces,
     list_pods,
     pod_ready,
     pod_restarts,
@@ -214,3 +215,19 @@ async def test_list_pods_maps_api_items() -> None:
             memory="-",
         ),
     ]
+
+
+@pytest.mark.asyncio
+async def test_list_namespaces_maps_api_items() -> None:
+    items = [
+        SimpleNamespace(metadata=SimpleNamespace(name="billing")),
+        SimpleNamespace(metadata=SimpleNamespace(name="airflow")),
+    ]
+
+    class FakeCoreV1:
+        async def list_namespace(self) -> SimpleNamespace:
+            return SimpleNamespace(items=items)
+
+    kube_client = SimpleNamespace(core_v1=FakeCoreV1())
+
+    assert await list_namespaces(kube_client) == ["airflow", "billing"]

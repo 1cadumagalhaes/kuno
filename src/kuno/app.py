@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from contextlib import suppress
 from typing import ClassVar
 
-from textual import work
+from textual import events, work
 from textual.app import App, ComposeResult, SystemCommand
 from textual.containers import Horizontal, Vertical
 from textual.widgets import DataTable, Footer, Input, Static
 
-from kuno.commands import ParsedCommand, parse_command
+from kuno.commands import ParsedCommand, parse_command, suggest_commands
 from kuno.k8s.client import KubeClient
-from kuno.k8s.config import UnknownContextError, load_startup_targets
-from kuno.k8s.resources import list_pods, render_pod_details, truncate_for_table
+from kuno.k8s.config import UnknownContextError, load_available_context_names, load_startup_targets
+from kuno.k8s.resources import list_namespaces, list_pods, render_pod_details, truncate_for_table
 from kuno.models import PodSummary, StartupConfig
 
 
@@ -25,7 +26,11 @@ class KunoApp(App[None]):
 
     def __init__(self, startup_config: StartupConfig) -> None:
         super().__init__()
+        self.available_contexts: list[str] = []
+        self.available_namespaces: list[str] = []
         self.command_bar_visible = False
+        self.command_suggestions: list[str] = []
+        self.command_suggestion_index = 0
         self.details_visible = False
         self.startup_config = startup_config
         self.pods: list[PodSummary] = []
@@ -40,24 +45,27 @@ class KunoApp(App[None]):
             with Vertical(id="details-panel"):
                 yield Static("Details", classes="panel-title")
                 yield Static("pod\n(loading)", id="pod-details")
-        with Horizontal(id="command-bar"):
-            yield Static(":", id="command-prefix")
-            yield Input(placeholder="command", id="command-input")
+        with Vertical(id="command-area"):
+            with Horizontal(id="command-bar"):
+                yield Static(":", id="command-prefix")
+                yield Input(placeholder="command", id="command-input")
+            yield Static("", id="command-suggestions")
         yield Footer()
 
     def on_mount(self) -> None:
-        command_bar = self.query_one("#command-bar", Horizontal)
+        command_area = self.query_one("#command-area", Vertical)
         details_panel = self.query_one("#details-panel", Vertical)
         summary = self.query_one("#startup-summary", Static)
         pod_table = self.query_one("#pod-table", DataTable)
         pod_details = self.query_one("#pod-details", Static)
-        command_bar.display = self.command_bar_visible
+        command_area.display = self.command_bar_visible
         details_panel.display = self.details_visible
         pod_table.focus()
         pod_table.cursor_type = "row"
         pod_table.zebra_stripes = True
         pod_table.add_column("Name", width=56)
         pod_table.add_columns("Ready", "Status", "Restarts", "Age", "CPU", "Memory", "Containers")
+        self.available_contexts = load_available_context_names()
         try:
             self.resolved_startup_config = load_startup_targets(self.startup_config)
         except UnknownContextError as error:
@@ -84,6 +92,8 @@ class KunoApp(App[None]):
         try:
             async with KubeClient(context=context) as kube_client:
                 pods = await list_pods(kube_client, namespace)
+                with suppress(Exception):
+                    self.available_namespaces = await list_namespaces(kube_client)
         except Exception as error:
             self.pods = []
             await self._render_pod_table()
@@ -129,28 +139,54 @@ class KunoApp(App[None]):
             pass
 
     def action_open_command_bar(self) -> None:
-        command_bar = self.query_one("#command-bar", Horizontal)
+        command_area = self.query_one("#command-area", Vertical)
         command_input = self.query_one("#command-input", Input)
         self.command_bar_visible = True
-        command_bar.display = True
+        command_area.display = True
         command_input.value = ""
+        self._update_command_suggestions("")
         command_input.focus()
 
     def action_close_command_bar(self) -> None:
         if not self.command_bar_visible:
             return
-        command_bar = self.query_one("#command-bar", Horizontal)
+        command_area = self.query_one("#command-area", Vertical)
         command_input = self.query_one("#command-input", Input)
         self.command_bar_visible = False
-        command_bar.display = False
+        command_area.display = False
         command_input.value = ""
+        self.command_suggestions = []
+        self.command_suggestion_index = 0
+        self._render_command_suggestions()
         self.query_one("#pod-table", DataTable).focus()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "command-input":
+            return
+        self._update_command_suggestions(event.value)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id != "command-input":
             return
         self.execute_command(event.value)
         self.action_close_command_bar()
+
+    def on_key(self, event: events.Key) -> None:
+        if not self.command_bar_visible:
+            return
+        command_input = self.query_one("#command-input", Input)
+        if self.focused is not command_input:
+            return
+
+        if event.key == "tab":
+            self._accept_command_suggestion()
+            event.stop()
+        elif event.key == "down":
+            self._move_command_suggestion(1)
+            event.stop()
+        elif event.key == "up":
+            self._move_command_suggestion(-1)
+            event.stop()
 
     def get_system_commands(self, screen) -> Iterable[SystemCommand]:
         yield from super().get_system_commands(screen)
@@ -232,6 +268,44 @@ class KunoApp(App[None]):
         if self.resolved_startup_config is None:
             raise ValueError("Startup target is not resolved")
         return self.resolved_startup_config
+
+    def _update_command_suggestions(self, raw: str) -> None:
+        self.command_suggestions = suggest_commands(
+            raw,
+            contexts=self.available_contexts,
+            namespaces=self.available_namespaces,
+        )
+        self.command_suggestion_index = 0
+        self._render_command_suggestions()
+
+    def _render_command_suggestions(self) -> None:
+        suggestions = self.query_one("#command-suggestions", Static)
+        suggestions.display = bool(self.command_suggestions)
+        if not self.command_suggestions:
+            suggestions.update("")
+            return
+
+        lines = []
+        for index, suggestion in enumerate(self.command_suggestions[:8]):
+            prefix = ">" if index == self.command_suggestion_index else " "
+            lines.append(f"{prefix} {suggestion}")
+        suggestions.update("\n".join(lines))
+
+    def _accept_command_suggestion(self) -> None:
+        if not self.command_suggestions:
+            return
+        command_input = self.query_one("#command-input", Input)
+        command_input.value = self.command_suggestions[self.command_suggestion_index]
+        command_input.cursor_position = len(command_input.value)
+        self._update_command_suggestions(command_input.value)
+
+    def _move_command_suggestion(self, direction: int) -> None:
+        if not self.command_suggestions:
+            return
+        self.command_suggestion_index = (self.command_suggestion_index + direction) % len(
+            self.command_suggestions[:8]
+        )
+        self._render_command_suggestions()
 
     def _update_pod_details(self, index: int | None) -> None:
         pod_details = self.query_one("#pod-details", Static)

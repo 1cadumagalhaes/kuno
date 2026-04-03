@@ -1,6 +1,6 @@
 import pytest
 
-from kuno.commands import ParsedCommand, parse_command
+from kuno.commands import ParsedCommand, parse_command, suggest_commands
 
 
 @pytest.mark.parametrize(
@@ -22,3 +22,20 @@ def test_parse_command_supports_current_command_set(raw: str, expected: ParsedCo
 def test_parse_command_rejects_invalid_input(raw: str) -> None:
     with pytest.raises(ValueError):
         parse_command(raw)
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("", ["pods", "refresh", "details", "hide-details", "ns", "ctx", "help"]),
+        ("re", ["refresh"]),
+        ("ns ", ["ns airflow", "ns billing"]),
+        ("ns bi", ["ns billing"]),
+        ("ctx p", ["ctx prod"]),
+    ],
+)
+def test_suggest_commands_returns_contextual_matches(raw: str, expected: list[str]) -> None:
+    assert (
+        suggest_commands(raw, contexts=["dev", "prod"], namespaces=["airflow", "billing"])
+        == expected
+    )

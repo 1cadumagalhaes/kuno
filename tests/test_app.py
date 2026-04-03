@@ -1,5 +1,5 @@
 import pytest
-from textual.containers import Horizontal, Vertical
+from textual.containers import Vertical
 from textual.widgets import DataTable, Input, Static
 
 from kuno.app import KunoApp
@@ -250,13 +250,15 @@ async def test_app_opens_command_bar(monkeypatch) -> None:
 
     async with app.run_test() as pilot:
         await pilot.pause()
-        command_bar = app.query_one("#command-bar", Horizontal)
+        command_area = app.query_one("#command-area", Vertical)
         command_input = app.query_one("#command-input", Input)
-        assert command_bar.display is False
+        suggestions = app.query_one("#command-suggestions", Static)
+        assert command_area.display is False
         app.action_open_command_bar()
         await pilot.pause()
-        assert command_bar.display is True
+        assert command_area.display is True
         assert command_input.value == ""
+        assert suggestions.display is True
 
 
 @pytest.mark.asyncio
@@ -287,14 +289,99 @@ async def test_app_closes_command_bar(monkeypatch) -> None:
 
     async with app.run_test() as pilot:
         await pilot.pause()
-        command_bar = app.query_one("#command-bar", Horizontal)
+        command_area = app.query_one("#command-area", Vertical)
         command_input = app.query_one("#command-input", Input)
         app.action_open_command_bar()
         await pilot.pause()
         app.action_close_command_bar()
         await pilot.pause()
-        assert command_bar.display is False
+        assert command_area.display is False
         assert command_input.value == ""
+
+
+@pytest.mark.asyncio
+async def test_app_updates_command_suggestions(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
+        return []
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+    monkeypatch.setattr("kuno.app.load_available_context_names", lambda: ["dev", "prod"])
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
+
+    async def fake_list_namespaces(kube_client: FakeKubeClient) -> list[str]:
+        return ["airflow", "billing"]
+
+    monkeypatch.setattr("kuno.app.list_namespaces", fake_list_namespaces)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_open_command_bar()
+        await pilot.pause()
+        command_input = app.query_one("#command-input", Input)
+        suggestions = app.query_one("#command-suggestions", Static)
+        command_input.value = "ns "
+        await pilot.pause()
+        suggestion_text = str(suggestions.content)
+        assert "ns airflow" in suggestion_text
+        assert "ns billing" in suggestion_text
+
+
+@pytest.mark.asyncio
+async def test_app_accepts_command_suggestion(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
+        return []
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+    monkeypatch.setattr("kuno.app.load_available_context_names", lambda: ["dev", "prod"])
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
+
+    async def fake_list_namespaces(kube_client: FakeKubeClient) -> list[str]:
+        return ["airflow", "billing"]
+
+    monkeypatch.setattr("kuno.app.list_namespaces", fake_list_namespaces)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.action_open_command_bar()
+        await pilot.pause()
+        command_input = app.query_one("#command-input", Input)
+        command_input.value = "re"
+        await pilot.pause()
+        await pilot.press("tab")
+        await pilot.pause()
+        assert command_input.value == "refresh"
 
 
 @pytest.mark.asyncio
