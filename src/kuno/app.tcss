@@ -72,14 +72,12 @@ Screen {
 }
 
 #command-suggestions {
-    align-horizontal: left;
     background: $surface;
     border: round $accent;
     color: $text;
     display: none;
     height: auto;
-    max-width: 48;
     margin-top: 1;
+    max-height: 6;
     padding: 0 1;
-    width: 48;
 }

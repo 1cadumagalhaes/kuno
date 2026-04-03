@@ -286,7 +286,7 @@ class KunoApp(App[None]):
             return
 
         lines = []
-        for index, suggestion in enumerate(self.command_suggestions[:8]):
+        for index, suggestion in enumerate(self.command_suggestions[:4]):
             prefix = ">" if index == self.command_suggestion_index else " "
             lines.append(f"{prefix} {suggestion}")
         suggestions.update("\n".join(lines))
@@ -303,7 +303,7 @@ class KunoApp(App[None]):
         if not self.command_suggestions:
             return
         self.command_suggestion_index = (self.command_suggestion_index + direction) % len(
-            self.command_suggestions[:8]
+            self.command_suggestions[:4]
         )
         self._render_command_suggestions()
 
