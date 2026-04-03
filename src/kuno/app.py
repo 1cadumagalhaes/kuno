@@ -404,16 +404,24 @@ class LogsScreen(Screen[None]):
     def _update_detail_panel(self) -> None:
         if not self.details_visible:
             return
+        title = self.query_one("#logs-detail-title", Static)
         detail = self.query_one("#logs-detail-content", Static)
         visible = self._visible_log_indices()
         if not visible:
+            title.update("Log Detail")
             detail.update("(no log selected)")
             return
         index = self.selected_log_index if self.selected_log_index in visible else visible[0]
         raw_line = self.log_lines[index]
-        pretty = "\n".join(format_log_line(raw_line, LogMode.PRETTY))
         parsed = parse_log_line(raw_line)
-        detail.update(f"raw:\n{parsed.raw}\n\npretty:\n{pretty}")
+        title.update(f"Log Detail ({index + 1}/{len(visible)})")
+        timestamp = f"timestamp: {parsed.timestamp}\n\n" if parsed.timestamp else ""
+        body = (
+            "\n".join(format_log_line(raw_line, LogMode.PRETTY))
+            if parsed.data is not None
+            else parsed.raw
+        )
+        detail.update(f"{timestamp}{body}")
 
     def _visible_log_indices(self) -> list[int]:
         visible: list[int] = []

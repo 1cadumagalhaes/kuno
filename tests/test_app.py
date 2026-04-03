@@ -1122,12 +1122,15 @@ async def test_logs_screen_toggles_line_detail_panel(monkeypatch) -> None:
         await pilot.pause()
         assert isinstance(app.screen, LogsScreen)
         detail_panel = app.screen.query_one("#logs-detail-panel", Vertical)
+        detail_title = app.screen.query_one("#logs-detail-title", Static)
         detail_content = app.screen.query_one("#logs-detail-content", Static)
         assert detail_panel.display is False
         await pilot.press("d")
         await pilot.pause()
         assert detail_panel.display is True
-        assert "pretty:" in str(detail_content.content)
+        assert str(detail_title.content) == "Log Detail (1/1)"
+        assert "{" in str(detail_content.content)
+        assert '"level": "info"' in str(detail_content.content)
 
 
 @pytest.mark.asyncio
