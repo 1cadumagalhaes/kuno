@@ -30,6 +30,7 @@ from kuno.k8s.resources import (
     list_secrets,
     list_services,
     list_statefulsets,
+    parse_since_duration,
     read_pod_logs,
     render_container_details,
     render_context_details,
@@ -94,6 +95,7 @@ class LogsScreen(Screen[None]):
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("escape", "close", "Back"),
         ("f", "toggle_follow", "Follow"),
+        ("s", "focus_since", "Since"),
         ("slash", "focus_filter", "Filter"),
         ("r", "reload", "Reload"),
         ("t", "toggle_timestamps", "Timestamps"),
@@ -117,6 +119,7 @@ class LogsScreen(Screen[None]):
         self.namespace = namespace
         self.pod_name = pod_name
         self.container_name = container_name
+        self.since_text = ""
         self.timestamps_enabled = False
         self.wrap_enabled = False
 
@@ -130,11 +133,14 @@ class LogsScreen(Screen[None]):
             self._title_text(target),
             id="logs-title",
         )
-        yield Input(placeholder="filter logs", id="logs-filter")
+        with Horizontal(id="logs-controls"):
+            yield Input(placeholder="since (e.g. 5m, 1h)", id="logs-since")
+            yield Input(placeholder="filter logs", id="logs-filter")
         yield Log(id="logs-output", highlight=False)
         yield Footer()
 
     def on_mount(self) -> None:
+        self.query_one("#logs-output", Log).focus()
         self.set_interval(2, self._poll_logs)
         self.load_logs()
 
@@ -149,6 +155,7 @@ class LogsScreen(Screen[None]):
                     self.namespace,
                     self.pod_name,
                     container_name=self.container_name,
+                    since_seconds=parse_since_duration(self.since_text),
                     timestamps=self.timestamps_enabled,
                 )
         except Exception as error:
@@ -159,13 +166,21 @@ class LogsScreen(Screen[None]):
         self._render_logs()
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        if event.input.id != "logs-filter":
-            return
-        self.filter_text = event.value
-        self._render_logs()
+        if event.input.id == "logs-filter":
+            self.filter_text = event.value
+            self._render_logs()
+        elif event.input.id == "logs-since":
+            self.since_text = event.value
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "logs-since":
+            self.load_logs()
 
     def action_focus_filter(self) -> None:
         self.query_one("#logs-filter", Input).focus()
+
+    def action_focus_since(self) -> None:
+        self.query_one("#logs-since", Input).focus()
 
     def action_reload(self) -> None:
         self.load_logs()
@@ -229,7 +244,8 @@ class LogsScreen(Screen[None]):
             f"context: {self.context}\n"
             f"namespace: {self.namespace}\n"
             f"target: {target}\n"
-            f"follow: {follow}  timestamps: {timestamps}  wrap: {wrap}"
+            f"follow: {follow} [f]  timestamps: {timestamps} [t]  wrap: {wrap} [w]\n"
+            f"since: {self.since_text or 'all'} [s]  filter: /  reload: r  clear filter: ctrl+l  back: esc"
         )
 
     def _update_title(self) -> None:
@@ -249,6 +265,7 @@ class KunoApp(App[None]):
     MAX_COMMAND_SUGGESTIONS = 4
     theme = "nord"
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
+        ("backspace", "go_back", "Back"),
         ("d", "toggle_details", "Details"),
         ("l", "open_logs", "Logs"),
         ("colon", "open_command_bar", "Command"),
@@ -268,6 +285,7 @@ class KunoApp(App[None]):
         self.contexts: list[ContextSummary] = []
         self.current_view = ExplorerView.CONTEXTS
         self.details_visible = False
+        self.navigation_stack: list[tuple[ExplorerView, str | None]] = []
         self.namespaces: list[NamespaceSummary] = []
         self.startup_config = startup_config
         self.deployments: list[DeploymentSummary] = []
@@ -279,7 +297,9 @@ class KunoApp(App[None]):
         self.resolved_startup_config: StartupConfig | None = None
 
     def compose(self) -> ComposeResult:
-        yield Static(self._summary_text(), id="startup-summary")
+        with Horizontal(id="summary-bar"):
+            yield Static(self._summary_text(), id="startup-summary")
+            yield Button("Back", id="back-button")
         with Horizontal(id="explorer"):
             with Vertical(id="pod-panel"):
                 yield Static(self._panel_title(), id="table-title", classes="panel-title")
@@ -295,12 +315,14 @@ class KunoApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
+        back_button = self.query_one("#back-button", Button)
         command_area = self.query_one("#command-area", Vertical)
         details_panel = self.query_one("#details-panel", Vertical)
         summary = self.query_one("#startup-summary", Static)
         pod_table = self.query_one("#pod-table", DataTable)
         pod_details = self.query_one("#pod-details", Static)
         command_area.display = self.command_bar_visible
+        back_button.display = False
         details_panel.display = self.details_visible
         pod_table.focus()
         pod_table.cursor_type = "row"
@@ -653,6 +675,8 @@ class KunoApp(App[None]):
 
     def get_system_commands(self, screen) -> Iterable[SystemCommand]:
         yield SystemCommand("About", "Show information about kuno", self._command_about)
+        if self.navigation_stack:
+            yield SystemCommand("Back", "Return to the previous explorer view", self.action_go_back)
         if screen.query("HelpPanel"):
             yield SystemCommand(
                 "Keys",
@@ -784,6 +808,8 @@ class KunoApp(App[None]):
         match command.name:
             case "about":
                 self._command_about()
+            case "back":
+                self.action_go_back()
             case "containers":
                 self._command_containers()
             case "contexts":
@@ -828,16 +854,29 @@ class KunoApp(App[None]):
                 self._command_context(command.argument)
             case "help":
                 self.notify(
-                    "Commands: about, contexts, namespaces, pods, containers, deploy, sts, svc, pvc, secrets, logs, refresh, details, hide-details, del, restart, theme [name], ns <ns>, ctx <ctx>"
+                    "Commands: about, back, contexts, namespaces, pods, containers, deploy, sts, svc, pvc, secrets, logs, refresh, details, hide-details, del, restart, theme [name], ns <ns>, ctx <ctx>"
                 )
             case _:
                 self.notify(f"Unknown command: {command.name}", severity="error")
 
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "back-button":
+            self.action_go_back()
+
     def _command_about(self) -> None:
         self.push_screen(AboutScreen())
 
+    def action_go_back(self) -> None:
+        if not self.navigation_stack:
+            self.notify("Already at the top level", severity="warning")
+            return
+        self.current_view, self.container_pod_name = self.navigation_stack.pop()
+        self.refresh_current_view()
+        self._update_back_button()
+
     def _command_pods(self) -> None:
         if self.current_view is not ExplorerView.PODS:
+            self._push_navigation_state()
             self.current_view = ExplorerView.PODS
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
@@ -845,6 +884,7 @@ class KunoApp(App[None]):
     def _open_selected_pod(self, index: int) -> None:
         if index < 0 or index >= len(self.pods):
             return
+        self._push_navigation_state()
         self.container_pod_name = self.pods[index].name
         self.current_view = ExplorerView.CONTAINERS
         self.refresh_current_view()
@@ -861,6 +901,7 @@ class KunoApp(App[None]):
             self.notify("No pod selected", severity="warning")
             return
         if self.current_view is not ExplorerView.CONTAINERS:
+            self._push_navigation_state()
             self.current_view = ExplorerView.CONTAINERS
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
@@ -869,6 +910,7 @@ class KunoApp(App[None]):
         if index < 0 or index >= len(self.contexts):
             return
         context = self.contexts[index]
+        self._push_navigation_state()
         self._command_context(context.name)
         self.current_view = ExplorerView.NAMESPACES
         self.refresh_current_view()
@@ -877,48 +919,56 @@ class KunoApp(App[None]):
         if index < 0 or index >= len(self.namespaces):
             return
         namespace = self.namespaces[index]
+        self._push_navigation_state()
         self._command_namespace(namespace.name)
         self.current_view = ExplorerView.PODS
         self.refresh_current_view()
 
     def _command_contexts(self) -> None:
         if self.current_view is not ExplorerView.CONTEXTS:
+            self._push_navigation_state()
             self.current_view = ExplorerView.CONTEXTS
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
 
     def _command_deployments(self) -> None:
         if self.current_view is not ExplorerView.DEPLOYMENTS:
+            self._push_navigation_state()
             self.current_view = ExplorerView.DEPLOYMENTS
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
 
     def _command_namespaces(self) -> None:
         if self.current_view is not ExplorerView.NAMESPACES:
+            self._push_navigation_state()
             self.current_view = ExplorerView.NAMESPACES
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
 
     def _command_pvc(self) -> None:
         if self.current_view is not ExplorerView.PVC:
+            self._push_navigation_state()
             self.current_view = ExplorerView.PVC
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
 
     def _command_secrets(self) -> None:
         if self.current_view is not ExplorerView.SECRETS:
+            self._push_navigation_state()
             self.current_view = ExplorerView.SECRETS
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
 
     def _command_services(self) -> None:
         if self.current_view is not ExplorerView.SERVICES:
+            self._push_navigation_state()
             self.current_view = ExplorerView.SERVICES
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
 
     def _command_statefulsets(self) -> None:
         if self.current_view is not ExplorerView.STATEFULSETS:
+            self._push_navigation_state()
             self.current_view = ExplorerView.STATEFULSETS
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
@@ -1151,6 +1201,15 @@ class KunoApp(App[None]):
             container = self.containers[cursor_row]
             return (container.pod, container.name)
         return None
+
+    def _push_navigation_state(self) -> None:
+        state = (self.current_view, self.container_pod_name)
+        if not self.navigation_stack or self.navigation_stack[-1] != state:
+            self.navigation_stack.append(state)
+        self._update_back_button()
+
+    def _update_back_button(self) -> None:
+        self.query_one("#back-button", Button).display = bool(self.navigation_stack)
 
     def _update_command_suggestions(self, raw: str) -> None:
         self.command_suggestions = suggest_commands(

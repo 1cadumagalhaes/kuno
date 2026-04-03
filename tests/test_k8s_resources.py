@@ -20,6 +20,7 @@ from kuno.k8s.resources import (
     list_services,
     list_statefulsets,
     namespace_summary_from_api_item,
+    parse_since_duration,
     pod_ready,
     pod_restarts,
     pod_summary_from_api_item,
@@ -842,3 +843,11 @@ async def test_read_pod_logs_reads_selected_pod_and_container() -> None:
         await read_pod_logs(kube_client, "payments", "api-1", container_name="api")
         == "line-1\nline-2"
     )
+
+
+def test_parse_since_duration_supports_kubectl_style_values() -> None:
+    assert parse_since_duration("") is None
+    assert parse_since_duration("30s") == 30
+    assert parse_since_duration("5m") == 300
+    assert parse_since_duration("2h") == 7200
+    assert parse_since_duration("1d") == 86400

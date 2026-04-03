@@ -53,16 +53,35 @@ async def read_pod_logs(
     *,
     container_name: str | None = None,
     tail_lines: int = 500,
+    since_seconds: int | None = None,
     timestamps: bool = False,
 ) -> str:
     if kube_client.core_v1 is None:
         raise RuntimeError("Kubernetes client is not connected")
 
     kwargs: dict[str, Any] = {"tail_lines": tail_lines, "timestamps": timestamps}
+    if since_seconds is not None:
+        kwargs["since_seconds"] = since_seconds
     if container_name is not None:
         kwargs["container"] = container_name
     result = await kube_client.core_v1.read_namespaced_pod_log(pod_name, namespace, **kwargs)
     return result if isinstance(result, str) else ""
+
+
+def parse_since_duration(value: str) -> int | None:
+    text = value.strip()
+    if not text:
+        return None
+    if len(text) < 2:
+        raise ValueError("Invalid since duration")
+    unit = text[-1]
+    amount = text[:-1]
+    if not amount.isdigit():
+        raise ValueError("Invalid since duration")
+    multipliers = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+    if unit not in multipliers:
+        raise ValueError("Invalid since duration")
+    return int(amount) * multipliers[unit]
 
 
 async def list_namespaces(kube_client: HasCoreV1) -> list[str]:

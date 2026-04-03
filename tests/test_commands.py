@@ -42,6 +42,7 @@ def test_parse_command_rejects_invalid_input(raw: str) -> None:
             "",
             [
                 "about",
+                "back",
                 "containers",
                 "contexts",
                 "del",

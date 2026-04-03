@@ -1,6 +1,6 @@
 import pytest
 from textual.containers import Vertical
-from textual.widgets import DataTable, Input, Log, Static
+from textual.widgets import Button, DataTable, Input, Log, Static
 
 from kuno.app import AboutScreen, KunoApp, LogsScreen
 from kuno.k8s.config import UnknownContextError
@@ -255,6 +255,141 @@ async def test_app_selecting_pod_opens_containers(monkeypatch) -> None:
         assert app.container_pod_name == "api-1"
         assert table_title.content == "Containers (api-1)"
         assert pod_table.row_count == 1
+
+
+@pytest.mark.asyncio
+async def test_app_can_go_back_from_containers_to_pods(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
+        return [
+            PodSummary(
+                name="api-1",
+                ready="1/1",
+                status="Running",
+                restarts=0,
+                age="1m",
+                containers="api",
+                cpu="100m",
+                memory="64Mi",
+            )
+        ]
+
+    async def fake_list_pod_containers(
+        kube_client: FakeKubeClient, namespace: str, pod_name: str
+    ) -> list[ContainerSummary]:
+        return [
+            ContainerSummary(
+                name="api",
+                pod="api-1",
+                ready="yes",
+                state="Running",
+                restarts=0,
+                image="ghcr.io/example/api:1.0.0",
+                cpu="250m",
+                memory="128Mi",
+            )
+        ]
+
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
+    monkeypatch.setattr("kuno.app.list_pod_containers", fake_list_pod_containers)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app.current_view = ExplorerView.PODS
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.current_view is ExplorerView.CONTAINERS
+        assert app.query_one("#back-button", Button).display is True
+        app.action_go_back()
+        await pilot.pause()
+        assert app.current_view is ExplorerView.PODS
+
+
+@pytest.mark.asyncio
+async def test_app_can_go_back_from_pods_to_namespaces(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+    monkeypatch.setattr(
+        "kuno.app.load_context_summaries",
+        lambda: [
+            ContextSummary(
+                name="prod",
+                cluster="prod-cluster",
+                user="prod-user",
+                namespace="payments",
+                current="*",
+            )
+        ],
+    )
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_namespaces(kube_client: FakeKubeClient) -> list[str]:
+        return ["payments"]
+
+    async def fake_list_namespace_summaries(
+        kube_client: FakeKubeClient, *, current_namespace: str | None
+    ) -> list[NamespaceSummary]:
+        return [NamespaceSummary(name="payments", status="Active", age="1h", current="*")]
+
+    async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
+        return [
+            PodSummary(
+                name="api-1",
+                ready="1/1",
+                status="Running",
+                restarts=0,
+                age="1m",
+                containers="api",
+                cpu="100m",
+                memory="64Mi",
+            )
+        ]
+
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_namespaces", fake_list_namespaces)
+    monkeypatch.setattr("kuno.app.list_namespace_summaries", fake_list_namespace_summaries)
+    monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.current_view is ExplorerView.PODS
+        app.action_go_back()
+        await pilot.pause()
+        assert app.current_view is ExplorerView.NAMESPACES
 
 
 @pytest.mark.asyncio
@@ -645,7 +780,8 @@ async def test_logs_screen_toggles_timestamps_and_wrap(monkeypatch) -> None:
         await pilot.pause()
         assert app.screen.wrap_enabled is True
         assert app.screen.timestamps_enabled is True
-        assert calls == [False, True]
+        title = app.screen.query_one("#logs-title", Static)
+        assert "timestamps: on [t]" in str(title.content)
 
 
 @pytest.mark.asyncio
