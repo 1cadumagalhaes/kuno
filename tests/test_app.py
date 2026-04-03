@@ -723,6 +723,68 @@ async def test_logs_screen_filters_lines(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_logs_screen_starts_selected_at_last_line(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    async def fake_read_pod_logs(
+        kube_client,
+        namespace: str,
+        pod_name: str,
+        *,
+        container_name: str | None = None,
+        tail_lines: int = 500,
+        since_seconds: int | None = None,
+        timestamps: bool = False,
+    ) -> str:
+        return "line-1\nline-2\nline-3"
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_pod_containers(
+        kube_client: FakeKubeClient, namespace: str, pod_name: str
+    ) -> list[ContainerSummary]:
+        return [
+            ContainerSummary(
+                name="api",
+                pod="api-1",
+                ready="yes",
+                state="Running",
+                restarts=0,
+                image="ghcr.io/example/api:1.0.0",
+                cpu="250m",
+                memory="128Mi",
+            )
+        ]
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_pod_containers", fake_list_pod_containers)
+    monkeypatch.setattr("kuno.app.read_pod_logs", fake_read_pod_logs)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app.current_view = ExplorerView.CONTAINERS
+    app.container_pod_name = "api-1"
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.refresh_current_view()
+        await pilot.pause()
+        app.execute_command("logs")
+        await pilot.pause()
+        assert isinstance(app.screen, LogsScreen)
+        assert app.screen.selected_log_index == 2
+
+
+@pytest.mark.asyncio
 async def test_logs_screen_toggles_timestamps_and_wrap(monkeypatch) -> None:
     def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
         return startup_config

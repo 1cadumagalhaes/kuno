@@ -181,7 +181,7 @@ class LogsScreen(Screen[None]):
 
         self.log_lines = logs.splitlines() if logs else []
         if self.log_lines:
-            self.selected_log_index = min(self.selected_log_index, len(self.log_lines) - 1)
+            self.selected_log_index = len(self.log_lines) - 1
         else:
             self.selected_log_index = 0
         self._render_logs()
@@ -286,6 +286,8 @@ class LogsScreen(Screen[None]):
         if lines:
             for line in lines:
                 output.write(line)
+            if self.follow_enabled or self.selected_log_index == len(self.log_lines) - 1:
+                output.scroll_end(animate=False, immediate=True, x_axis=False)
         elif self.log_lines:
             output.write("(no matching log lines)")
         else:
@@ -315,6 +317,7 @@ class LogsScreen(Screen[None]):
                     else:
                         for item in rendered:
                             output.write(item)
+                    output.scroll_end(animate=False, immediate=True, x_axis=False)
         except Exception as error:
             output.write(f"error: {error}")
 
