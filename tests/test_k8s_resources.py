@@ -12,16 +12,19 @@ from kuno.k8s.resources import (
     list_deployments,
     list_namespaces,
     list_pods,
+    list_services,
     list_statefulsets,
     pod_ready,
     pod_restarts,
     pod_summary_from_api_item,
     render_pod_details,
+    render_service_details,
     render_statefulset_details,
+    service_summary_from_api_item,
     statefulset_summary_from_api_item,
     truncate_for_table,
 )
-from kuno.models import DeploymentSummary, PodSummary, StatefulSetSummary
+from kuno.models import DeploymentSummary, PodSummary, ServiceSummary, StatefulSetSummary
 
 
 def test_pod_summary_from_api_item_reads_operational_fields() -> None:
@@ -395,4 +398,77 @@ def test_render_statefulset_details_formats_statefulset() -> None:
             )
         )
         == "statefulset\nname: postgres\nready: 2/3\nupdated: 2\ncurrent: 3\nage: 1h\ncontainers: postgres\ncpu: 500m\nmemory: 1Gi"
+    )
+
+
+def test_service_summary_from_api_item_reads_operational_fields() -> None:
+    item = SimpleNamespace(
+        metadata=SimpleNamespace(
+            name="api",
+            creation_timestamp=datetime(2026, 4, 2, 11, 0, tzinfo=UTC),
+        ),
+        spec=SimpleNamespace(
+            type="ClusterIP",
+            cluster_ip="10.0.0.1",
+            ports=[
+                SimpleNamespace(port=80, protocol="TCP"),
+                SimpleNamespace(port=443, protocol="TCP"),
+            ],
+            selector={"app": "api", "tier": "backend"},
+        ),
+    )
+
+    assert service_summary_from_api_item(
+        item, now=datetime(2026, 4, 2, 12, 0, tzinfo=UTC)
+    ) == ServiceSummary(
+        name="api",
+        type="ClusterIP",
+        cluster_ip="10.0.0.1",
+        ports="80/TCP,443/TCP",
+        age="1h",
+        selector="app=api,tier=backend",
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_services_maps_api_items() -> None:
+    items = [
+        SimpleNamespace(
+            metadata=SimpleNamespace(name="api"),
+            spec=SimpleNamespace(type="ClusterIP", cluster_ip="10.0.0.1", ports=[], selector=None),
+        )
+    ]
+
+    class FakeCoreV1:
+        async def list_namespaced_service(self, namespace: str) -> SimpleNamespace:
+            assert namespace == "payments"
+            return SimpleNamespace(items=items)
+
+    kube_client = SimpleNamespace(core_v1=FakeCoreV1())
+
+    assert await list_services(kube_client, "payments") == [
+        ServiceSummary(
+            name="api",
+            type="ClusterIP",
+            cluster_ip="10.0.0.1",
+            ports="-",
+            age="-",
+            selector="-",
+        )
+    ]
+
+
+def test_render_service_details_formats_service() -> None:
+    assert (
+        render_service_details(
+            ServiceSummary(
+                name="api",
+                type="ClusterIP",
+                cluster_ip="10.0.0.1",
+                ports="80/TCP,443/TCP",
+                age="1h",
+                selector="app=api,tier=backend",
+            )
+        )
+        == "service\nname: api\ntype: ClusterIP\ncluster-ip: 10.0.0.1\nports: 80/TCP,443/TCP\nage: 1h\nselector: app=api,tier=backend"
     )

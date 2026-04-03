@@ -24,6 +24,7 @@ class ExplorerView(StrEnum):
     PODS = "pods"
     DEPLOYMENTS = "deployments"
     STATEFULSETS = "statefulsets"
+    SERVICES = "services"
 
 
 @dataclass(slots=True)
@@ -48,3 +49,13 @@ class StatefulSetSummary:
     containers: str
     cpu: str
     memory: str
+
+
+@dataclass(slots=True)
+class ServiceSummary:
+    name: str
+    type: str
+    cluster_ip: str
+    ports: str
+    age: str
+    selector: str

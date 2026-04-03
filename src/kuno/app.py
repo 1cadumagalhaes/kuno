@@ -17,9 +17,11 @@ from kuno.k8s.resources import (
     list_deployments,
     list_namespaces,
     list_pods,
+    list_services,
     list_statefulsets,
     render_deployment_details,
     render_pod_details,
+    render_service_details,
     render_statefulset_details,
     truncate_for_table,
 )
@@ -27,6 +29,7 @@ from kuno.models import (
     DeploymentSummary,
     ExplorerView,
     PodSummary,
+    ServiceSummary,
     StartupConfig,
     StatefulSetSummary,
 )
@@ -70,6 +73,7 @@ class KunoApp(App[None]):
         self.startup_config = startup_config
         self.deployments: list[DeploymentSummary] = []
         self.pods: list[PodSummary] = []
+        self.services: list[ServiceSummary] = []
         self.statefulsets: list[StatefulSetSummary] = []
         self.resolved_startup_config: StartupConfig | None = None
 
@@ -130,20 +134,29 @@ class KunoApp(App[None]):
                 if self.current_view is ExplorerView.PODS:
                     self.pods = await list_pods(kube_client, namespace)
                     self.deployments = []
+                    self.services = []
                     self.statefulsets = []
                 elif self.current_view is ExplorerView.DEPLOYMENTS:
                     self.deployments = await list_deployments(kube_client, namespace)
                     self.pods = []
+                    self.services = []
+                    self.statefulsets = []
+                elif self.current_view is ExplorerView.SERVICES:
+                    self.services = await list_services(kube_client, namespace)
+                    self.pods = []
+                    self.deployments = []
                     self.statefulsets = []
                 else:
                     self.statefulsets = await list_statefulsets(kube_client, namespace)
                     self.pods = []
                     self.deployments = []
+                    self.services = []
                 with suppress(Exception):
                     self.available_namespaces = await list_namespaces(kube_client)
         except Exception as error:
             self.pods = []
             self.deployments = []
+            self.services = []
             self.statefulsets = []
             await self._render_pod_table()
             pod_details.update(f"{self._view_singular()}\n(error: {error})")
@@ -186,6 +199,17 @@ class KunoApp(App[None]):
                     deployment.memory,
                     deployment.containers,
                     key=deployment.name,
+                )
+        elif self.current_view is ExplorerView.SERVICES:
+            for service in self.services:
+                pod_table.add_row(
+                    truncate_for_table(service.name),
+                    service.type,
+                    service.cluster_ip,
+                    service.ports,
+                    service.age,
+                    service.selector,
+                    key=service.name,
                 )
         else:
             for statefulset in self.statefulsets:
@@ -322,6 +346,11 @@ class KunoApp(App[None]):
             self._command_deployments,
         )
         yield SystemCommand(
+            "Services",
+            "Show services in the main table",
+            self._command_services,
+        )
+        yield SystemCommand(
             "StatefulSets",
             "Show statefulsets in the main table",
             self._command_statefulsets,
@@ -364,6 +393,8 @@ class KunoApp(App[None]):
                 self._command_pods()
             case "refresh":
                 self._command_refresh()
+            case "svc":
+                self._command_services()
             case "sts":
                 self._command_statefulsets()
             case "details":
@@ -399,6 +430,12 @@ class KunoApp(App[None]):
     def _command_deployments(self) -> None:
         if self.current_view is not ExplorerView.DEPLOYMENTS:
             self.current_view = ExplorerView.DEPLOYMENTS
+            self.refresh_current_view()
+        self.query_one("#pod-table", DataTable).focus()
+
+    def _command_services(self) -> None:
+        if self.current_view is not ExplorerView.SERVICES:
+            self.current_view = ExplorerView.SERVICES
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
 
@@ -514,6 +551,8 @@ class KunoApp(App[None]):
             pod_details.update(render_pod_details(self.pods[index]))
         elif self.current_view is ExplorerView.DEPLOYMENTS:
             pod_details.update(render_deployment_details(self.deployments[index]))
+        elif self.current_view is ExplorerView.SERVICES:
+            pod_details.update(render_service_details(self.services[index]))
         else:
             pod_details.update(render_statefulset_details(self.statefulsets[index]))
 
@@ -529,6 +568,8 @@ class KunoApp(App[None]):
             pod_table.add_columns(
                 "Ready", "Up-to-date", "Available", "Age", "CPU", "Memory", "Containers"
             )
+        elif self.current_view is ExplorerView.SERVICES:
+            pod_table.add_columns("Type", "Cluster IP", "Ports", "Age", "Selector")
         else:
             pod_table.add_columns(
                 "Ready", "Updated", "Current", "Age", "CPU", "Memory", "Containers"
@@ -536,11 +577,15 @@ class KunoApp(App[None]):
 
     def _current_rows(
         self,
-    ) -> list[PodSummary] | list[DeploymentSummary] | list[StatefulSetSummary]:
+    ) -> (
+        list[PodSummary] | list[DeploymentSummary] | list[ServiceSummary] | list[StatefulSetSummary]
+    ):
         if self.current_view is ExplorerView.PODS:
             return self.pods
         if self.current_view is ExplorerView.DEPLOYMENTS:
             return self.deployments
+        if self.current_view is ExplorerView.SERVICES:
+            return self.services
         return self.statefulsets
 
     def _panel_title(self) -> str:
@@ -548,6 +593,8 @@ class KunoApp(App[None]):
             return "Pods"
         if self.current_view is ExplorerView.DEPLOYMENTS:
             return "Deployments"
+        if self.current_view is ExplorerView.SERVICES:
+            return "Services"
         return "StatefulSets"
 
     def _details_title(self) -> str:
@@ -555,6 +602,8 @@ class KunoApp(App[None]):
             return "Pod Details"
         if self.current_view is ExplorerView.DEPLOYMENTS:
             return "Deployment Details"
+        if self.current_view is ExplorerView.SERVICES:
+            return "Service Details"
         return "StatefulSet Details"
 
     def _view_singular(self) -> str:
@@ -562,6 +611,8 @@ class KunoApp(App[None]):
             return "pod"
         if self.current_view is ExplorerView.DEPLOYMENTS:
             return "deployment"
+        if self.current_view is ExplorerView.SERVICES:
+            return "service"
         return "statefulset"
 
     def _summary_text(self) -> str:

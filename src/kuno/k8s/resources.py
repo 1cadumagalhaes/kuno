@@ -6,7 +6,7 @@ from typing import Any, Protocol
 
 from kubernetes_asyncio.client import AppsV1Api, CoreV1Api
 
-from kuno.models import DeploymentSummary, PodSummary, StatefulSetSummary
+from kuno.models import DeploymentSummary, PodSummary, ServiceSummary, StatefulSetSummary
 
 
 class HasCoreV1(Protocol):
@@ -38,6 +38,15 @@ async def list_namespaces(kube_client: HasCoreV1) -> list[str]:
         if isinstance(name, str) and name:
             names.append(name)
     return sorted(names)
+
+
+async def list_services(kube_client: HasCoreV1, namespace: str) -> list[ServiceSummary]:
+    if kube_client.core_v1 is None:
+        raise RuntimeError("Kubernetes client is not connected")
+
+    service_list = await kube_client.core_v1.list_namespaced_service(namespace)
+    current = datetime.now(UTC)
+    return [service_summary_from_api_item(item, now=current) for item in service_list.items]
 
 
 async def list_deployments(kube_client: HasAppsV1, namespace: str) -> list[DeploymentSummary]:
@@ -145,6 +154,25 @@ def statefulset_summary_from_api_item(item: Any, now: datetime | None = None) ->
     )
 
 
+def service_summary_from_api_item(item: Any, now: datetime | None = None) -> ServiceSummary:
+    metadata = getattr(item, "metadata", None)
+    spec = getattr(item, "spec", None)
+    name = getattr(metadata, "name", None)
+    creation_timestamp = getattr(metadata, "creation_timestamp", None)
+
+    if not isinstance(name, str) or not name:
+        raise ValueError("Service is missing a valid name")
+
+    return ServiceSummary(
+        name=name,
+        type=string_or_default(getattr(spec, "type", None), "ClusterIP"),
+        cluster_ip=string_or_default(getattr(spec, "cluster_ip", None), "-"),
+        ports=service_ports_summary(getattr(spec, "ports", None)),
+        age=format_age(creation_timestamp, now=now),
+        selector=selector_summary(getattr(spec, "selector", None)),
+    )
+
+
 def pod_ready(container_statuses: Any) -> str:
     if not isinstance(container_statuses, list) or not container_statuses:
         return "0/0"
@@ -200,6 +228,31 @@ def truncate_for_table(value: str, max_length: int = 56) -> str:
     if max_length <= 3:
         return "." * max_length
     return f"{value[: max_length - 3]}..."
+
+
+def selector_summary(selector: Any) -> str:
+    if not isinstance(selector, dict) or not selector:
+        return "-"
+    parts = [f"{key}={value}" for key, value in sorted(selector.items())]
+    return truncate_for_table(",".join(parts), max_length=40)
+
+
+def service_ports_summary(ports: Any) -> str:
+    if not isinstance(ports, list) or not ports:
+        return "-"
+    values: list[str] = []
+    for port in ports:
+        number = getattr(port, "port", None)
+        protocol = string_or_default(getattr(port, "protocol", None), "TCP")
+        if isinstance(number, int):
+            values.append(f"{number}/{protocol}")
+    if not values:
+        return "-"
+    return truncate_for_table(",".join(values), max_length=32)
+
+
+def string_or_default(value: Any, default: str) -> str:
+    return value if isinstance(value, str) and value else default
 
 
 def format_cpu_requests(containers: Any) -> str:
@@ -302,4 +355,16 @@ def render_statefulset_details(statefulset: StatefulSetSummary) -> str:
         f"containers: {statefulset.containers}\n"
         f"cpu: {statefulset.cpu}\n"
         f"memory: {statefulset.memory}"
+    )
+
+
+def render_service_details(service: ServiceSummary) -> str:
+    return (
+        "service\n"
+        f"name: {service.name}\n"
+        f"type: {service.type}\n"
+        f"cluster-ip: {service.cluster_ip}\n"
+        f"ports: {service.ports}\n"
+        f"age: {service.age}\n"
+        f"selector: {service.selector}"
     )

@@ -8,6 +8,7 @@ from kuno.models import (
     DeploymentSummary,
     ExplorerView,
     PodSummary,
+    ServiceSummary,
     StartupConfig,
     StatefulSetSummary,
 )
@@ -727,6 +728,136 @@ async def test_app_renders_statefulset_details(monkeypatch) -> None:
         assert (
             pod_details.content
             == "statefulset\nname: postgres\nready: 2/3\nupdated: 2\ncurrent: 3\nage: 1h\ncontainers: postgres\ncpu: 500m\nmemory: 1Gi"
+        )
+
+
+@pytest.mark.asyncio
+async def test_app_switches_to_services_view(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
+        return []
+
+    async def fake_list_deployments(
+        kube_client: FakeKubeClient, namespace: str
+    ) -> list[DeploymentSummary]:
+        return []
+
+    async def fake_list_statefulsets(
+        kube_client: FakeKubeClient, namespace: str
+    ) -> list[StatefulSetSummary]:
+        return []
+
+    async def fake_list_services(
+        kube_client: FakeKubeClient, namespace: str
+    ) -> list[ServiceSummary]:
+        assert kube_client.context == "prod"
+        assert namespace == "payments"
+        return [
+            ServiceSummary(
+                name="api",
+                type="ClusterIP",
+                cluster_ip="10.0.0.1",
+                ports="80/TCP,443/TCP",
+                age="1h",
+                selector="app=api,tier=backend",
+            )
+        ]
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
+    monkeypatch.setattr("kuno.app.list_deployments", fake_list_deployments)
+    monkeypatch.setattr("kuno.app.list_statefulsets", fake_list_statefulsets)
+    monkeypatch.setattr("kuno.app.list_services", fake_list_services)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.execute_command("svc")
+        await pilot.pause()
+        table_title = app.query_one("#table-title", Static)
+        details_title = app.query_one("#details-title", Static)
+        pod_table = app.query_one("#pod-table", DataTable)
+        assert app.current_view is ExplorerView.SERVICES
+        assert table_title.content == "Services"
+        assert details_title.content == "Service Details"
+        assert pod_table.row_count == 1
+
+
+@pytest.mark.asyncio
+async def test_app_renders_service_details(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
+        return []
+
+    async def fake_list_deployments(
+        kube_client: FakeKubeClient, namespace: str
+    ) -> list[DeploymentSummary]:
+        return []
+
+    async def fake_list_statefulsets(
+        kube_client: FakeKubeClient, namespace: str
+    ) -> list[StatefulSetSummary]:
+        return []
+
+    async def fake_list_services(
+        kube_client: FakeKubeClient, namespace: str
+    ) -> list[ServiceSummary]:
+        return [
+            ServiceSummary(
+                name="api",
+                type="ClusterIP",
+                cluster_ip="10.0.0.1",
+                ports="80/TCP,443/TCP",
+                age="1h",
+                selector="app=api,tier=backend",
+            )
+        ]
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
+    monkeypatch.setattr("kuno.app.list_deployments", fake_list_deployments)
+    monkeypatch.setattr("kuno.app.list_statefulsets", fake_list_statefulsets)
+    monkeypatch.setattr("kuno.app.list_services", fake_list_services)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.execute_command("svc")
+        await pilot.pause()
+        await pilot.press("d")
+        await pilot.pause()
+        pod_details = app.query_one("#pod-details", Static)
+        assert (
+            pod_details.content
+            == "service\nname: api\ntype: ClusterIP\ncluster-ip: 10.0.0.1\nports: 80/TCP,443/TCP\nage: 1h\nselector: app=api,tier=backend"
         )
 
 
