@@ -10,4 +10,7 @@ class StartupConfig:
 @dataclass(slots=True)
 class PodSummary:
     name: str
-    phase: str
+    ready: str
+    status: str
+    restarts: int
+    age: str

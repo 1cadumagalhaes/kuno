@@ -1,23 +1,44 @@
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
 
 from kuno.k8s.resources import (
+    format_age,
     list_pods,
+    pod_ready,
+    pod_restarts,
     pod_summary_from_api_item,
     render_pod_details,
-    render_pod_row,
 )
 from kuno.models import PodSummary
 
 
-def test_pod_summary_from_api_item_reads_name_and_phase() -> None:
+def test_pod_summary_from_api_item_reads_operational_fields() -> None:
     item = SimpleNamespace(
-        metadata=SimpleNamespace(name="api-1"),
-        status=SimpleNamespace(phase="Running"),
+        metadata=SimpleNamespace(
+            name="api-1",
+            creation_timestamp=datetime(2024, 1, 1, 11, 55, tzinfo=UTC),
+        ),
+        status=SimpleNamespace(
+            phase="Running",
+            reason=None,
+            container_statuses=[
+                SimpleNamespace(ready=True, restart_count=1),
+                SimpleNamespace(ready=False, restart_count=2),
+            ],
+        ),
     )
 
-    assert pod_summary_from_api_item(item) == PodSummary(name="api-1", phase="Running")
+    assert pod_summary_from_api_item(
+        item, now=datetime(2026, 4, 2, 12, 0, tzinfo=UTC)
+    ) == PodSummary(
+        name="api-1",
+        ready="1/2",
+        status="Running",
+        restarts=3,
+        age="822d",
+    )
 
 
 def test_pod_summary_from_api_item_defaults_phase() -> None:
@@ -26,17 +47,54 @@ def test_pod_summary_from_api_item_defaults_phase() -> None:
         status=SimpleNamespace(phase=None),
     )
 
-    assert pod_summary_from_api_item(item) == PodSummary(name="api-1", phase="Unknown")
+    assert pod_summary_from_api_item(item) == PodSummary(
+        name="api-1",
+        ready="0/0",
+        status="Unknown",
+        restarts=0,
+        age="-",
+    )
 
 
-def test_render_pod_row_formats_summary() -> None:
-    assert render_pod_row(PodSummary(name="api-1", phase="Running")) == "api-1 [Running]"
+def test_pod_ready_counts_ready_containers() -> None:
+    container_statuses = [
+        SimpleNamespace(ready=True, restart_count=1),
+        SimpleNamespace(ready=False, restart_count=2),
+    ]
+
+    assert pod_ready(container_statuses) == "1/2"
+
+
+def test_pod_restarts_sums_restart_counts() -> None:
+    container_statuses = [
+        SimpleNamespace(ready=True, restart_count=1),
+        SimpleNamespace(ready=False, restart_count=2),
+    ]
+
+    assert pod_restarts(container_statuses) == 3
+
+
+def test_format_age_formats_ranges() -> None:
+    now = datetime(2026, 4, 2, 12, 0, tzinfo=UTC)
+
+    assert format_age(datetime(2026, 4, 2, 11, 59, 30, tzinfo=UTC), now=now) == "30s"
+    assert format_age(datetime(2026, 4, 2, 11, 30, tzinfo=UTC), now=now) == "30m"
+    assert format_age(datetime(2026, 4, 2, 7, 0, tzinfo=UTC), now=now) == "5h"
+    assert format_age(datetime(2026, 3, 30, 12, 0, tzinfo=UTC), now=now) == "3d"
 
 
 def test_render_pod_details_formats_pod() -> None:
     assert (
-        render_pod_details(PodSummary(name="api-1", phase="Running"))
-        == "pod\nname: api-1\nphase: Running"
+        render_pod_details(
+            PodSummary(
+                name="api-1",
+                ready="1/1",
+                status="Running",
+                restarts=2,
+                age="5m",
+            )
+        )
+        == "pod\nname: api-1\nready: 1/1\nstatus: Running\nrestarts: 2\nage: 5m"
     )
 
 
@@ -52,10 +110,12 @@ async def test_list_pods_requires_connected_client() -> None:
 async def test_list_pods_maps_api_items() -> None:
     items = [
         SimpleNamespace(
-            metadata=SimpleNamespace(name="api-1"), status=SimpleNamespace(phase="Running")
+            metadata=SimpleNamespace(name="api-1"),
+            status=SimpleNamespace(phase="Running"),
         ),
         SimpleNamespace(
-            metadata=SimpleNamespace(name="worker-1"), status=SimpleNamespace(phase="Pending")
+            metadata=SimpleNamespace(name="worker-1"),
+            status=SimpleNamespace(phase="Pending"),
         ),
     ]
 
@@ -67,6 +127,6 @@ async def test_list_pods_maps_api_items() -> None:
     kube_client = SimpleNamespace(core_v1=FakeCoreV1())
 
     assert await list_pods(kube_client, "payments") == [
-        PodSummary(name="api-1", phase="Running"),
-        PodSummary(name="worker-1", phase="Pending"),
+        PodSummary(name="api-1", ready="0/0", status="Running", restarts=0, age="-"),
+        PodSummary(name="worker-1", ready="0/0", status="Pending", restarts=0, age="-"),
     ]

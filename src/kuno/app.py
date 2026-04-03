@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import ClassVar
+
 from textual import work
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -13,9 +15,11 @@ from kuno.models import PodSummary, StartupConfig
 
 class KunoApp(App[None]):
     CSS_PATH = "app.tcss"
+    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("d", "toggle_details", "Details")]
 
     def __init__(self, startup_config: StartupConfig) -> None:
         super().__init__()
+        self.details_visible = False
         self.startup_config = startup_config
         self.pods: list[PodSummary] = []
         self.resolved_startup_config: StartupConfig | None = None
@@ -31,12 +35,14 @@ class KunoApp(App[None]):
                 yield Static("pod\n(loading)", id="pod-details")
 
     def on_mount(self) -> None:
+        details_panel = self.query_one("#details-panel", Vertical)
         summary = self.query_one("#startup-summary", Static)
         pod_table = self.query_one("#pod-table", DataTable)
         pod_details = self.query_one("#pod-details", Static)
+        details_panel.display = self.details_visible
         pod_table.cursor_type = "row"
         pod_table.zebra_stripes = True
-        pod_table.add_columns("Name", "Phase")
+        pod_table.add_columns("Name", "Ready", "Status", "Restarts", "Age")
         try:
             self.resolved_startup_config = load_startup_targets(self.startup_config)
         except UnknownContextError as error:
@@ -80,13 +86,22 @@ class KunoApp(App[None]):
         pod_table = self.query_one("#pod-table", DataTable)
         pod_table.clear()
         for pod in self.pods:
-            pod_table.add_row(pod.name, pod.phase, key=pod.name)
+            pod_table.add_row(
+                pod.name, pod.ready, pod.status, str(pod.restarts), pod.age, key=pod.name
+            )
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if event.data_table.id != "pod-table":
             return
 
         self._update_pod_details(event.cursor_row)
+
+    def action_toggle_details(self) -> None:
+        self.details_visible = not self.details_visible
+        details_panel = self.query_one("#details-panel", Vertical)
+        details_panel.display = self.details_visible
+        if self.details_visible:
+            self._update_pod_details(self.query_one("#pod-table", DataTable).cursor_row)
 
     def _update_pod_details(self, index: int | None) -> None:
         pod_details = self.query_one("#pod-details", Static)
