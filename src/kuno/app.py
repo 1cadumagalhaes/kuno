@@ -6,7 +6,7 @@ from typing import ClassVar
 from textual import work
 from textual.app import App, ComposeResult, SystemCommand
 from textual.containers import Horizontal, Vertical
-from textual.widgets import DataTable, Input, Static
+from textual.widgets import DataTable, Footer, Input, Static
 
 from kuno.commands import ParsedCommand, parse_command
 from kuno.k8s.client import KubeClient
@@ -17,7 +17,6 @@ from kuno.models import PodSummary, StartupConfig
 
 class KunoApp(App[None]):
     CSS_PATH = "app.tcss"
-    DEFAULT_COMMAND_STATUS = "Press : for commands, Ctrl+P for palette"
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("d", "toggle_details", "Details"),
         ("colon", "open_command_bar", "Command"),
@@ -42,7 +41,7 @@ class KunoApp(App[None]):
                 yield Static("Details", classes="panel-title")
                 yield Static("pod\n(loading)", id="pod-details")
         yield Input(placeholder=": command", id="command-input")
-        yield Static(self.DEFAULT_COMMAND_STATUS, id="command-status")
+        yield Footer()
 
     def on_mount(self) -> None:
         command_input = self.query_one("#command-input", Input)
@@ -124,9 +123,8 @@ class KunoApp(App[None]):
         details_panel.display = self.details_visible
         if self.details_visible:
             self._update_pod_details(self.query_one("#pod-table", DataTable).cursor_row)
-            self._set_command_status("Opened details panel")
         else:
-            self._set_command_status("Closed details panel")
+            pass
 
     def action_open_command_bar(self) -> None:
         command_input = self.query_one("#command-input", Input)
@@ -134,7 +132,6 @@ class KunoApp(App[None]):
         command_input.display = True
         command_input.value = ":"
         command_input.focus()
-        self._set_command_status(self.DEFAULT_COMMAND_STATUS)
 
     def action_close_command_bar(self) -> None:
         if not self.command_bar_visible:
@@ -144,7 +141,6 @@ class KunoApp(App[None]):
         command_input.display = False
         command_input.value = ""
         self.query_one("#pod-table", DataTable).focus()
-        self._set_command_status(self.DEFAULT_COMMAND_STATUS)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id != "command-input":
@@ -168,7 +164,7 @@ class KunoApp(App[None]):
             command = parse_command(raw)
             self._run_command(command)
         except (UnknownContextError, ValueError) as error:
-            self._set_command_status(str(error))
+            self.notify(str(error), severity="error")
 
     def _run_command(self, command: ParsedCommand) -> None:
         match command.name:
@@ -189,38 +185,35 @@ class KunoApp(App[None]):
                     raise ValueError("Command 'ctx' requires an argument")
                 self._command_context(command.argument)
             case "help":
-                self._set_command_status(
-                    "Commands: pods, refresh, details, hide-details, ns <ns>, ctx <ctx>"
-                )
+                self.notify("Commands: pods, refresh, details, hide-details, ns <ns>, ctx <ctx>")
             case _:
-                self._set_command_status(f"Unknown command: {command.name}")
+                self.notify(f"Unknown command: {command.name}", severity="error")
 
     def _command_pods(self) -> None:
         self.query_one("#pod-table", DataTable).focus()
-        self._set_command_status("Focused pods table")
 
     def _command_refresh(self) -> None:
         self.load_pods()
-        self._set_command_status("Refreshing pods")
+        self.notify("Refreshing pods")
 
     def _command_show_details(self) -> None:
         if not self.details_visible:
             self.action_toggle_details()
         else:
-            self._set_command_status("Details panel already open")
+            self.notify("Details panel already open")
 
     def _command_hide_details(self) -> None:
         if self.details_visible:
             self.action_toggle_details()
         else:
-            self._set_command_status("Details panel already closed")
+            self.notify("Details panel already closed")
 
     def _command_namespace(self, namespace: str) -> None:
         current = self._require_target()
         self.resolved_startup_config = StartupConfig(context=current.context, namespace=namespace)
         self.query_one("#startup-summary", Static).update(self._summary_text())
         self.load_pods()
-        self._set_command_status(f"Switched namespace to {namespace}")
+        self.notify(f"Switched namespace to {namespace}")
 
     def _command_context(self, context: str) -> None:
         current = self._require_target()
@@ -229,15 +222,12 @@ class KunoApp(App[None]):
         )
         self.query_one("#startup-summary", Static).update(self._summary_text())
         self.load_pods()
-        self._set_command_status(f"Switched context to {self.resolved_startup_config.context}")
+        self.notify(f"Switched context to {self.resolved_startup_config.context}")
 
     def _require_target(self) -> StartupConfig:
         if self.resolved_startup_config is None:
             raise ValueError("Startup target is not resolved")
         return self.resolved_startup_config
-
-    def _set_command_status(self, message: str) -> None:
-        self.query_one("#command-status", Static).update(message)
 
     def _update_pod_details(self, index: int | None) -> None:
         pod_details = self.query_one("#pod-details", Static)

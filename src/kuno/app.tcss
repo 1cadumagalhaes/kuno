@@ -48,12 +48,5 @@ Screen {
     display: none;
     dock: bottom;
     height: 3;
-    margin: 0 1 0 1;
-}
-
-#command-status {
-    color: $text-muted;
-    dock: bottom;
-    height: 1;
     margin: 0 1 1 1;
 }
