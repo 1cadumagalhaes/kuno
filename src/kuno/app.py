@@ -416,10 +416,18 @@ class LogsScreen(Screen[None]):
         for line in rendered:
             if isinstance(line, Text):
                 text = line.copy()
-                text.stylize(Style(bgcolor="grey23"))
+                text = Text.assemble(
+                    ("> ", Style(color="black", bgcolor="bright_white", bold=True)), text
+                )
+                text.stylize(Style(bgcolor="grey35"))
                 highlighted.append(text)
             else:
-                highlighted.append(Text(str(line), style=Style(bgcolor="grey23")))
+                highlighted.append(
+                    Text.assemble(
+                        ("> ", Style(color="black", bgcolor="bright_white", bold=True)),
+                        (str(line), Style(bgcolor="grey35")),
+                    )
+                )
         return highlighted
 
 
