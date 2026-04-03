@@ -462,6 +462,37 @@ async def test_app_opens_about_screen_from_command(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_app_executes_theme_command(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
+        return []
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.execute_command("theme nord")
+        await pilot.pause()
+        assert app.theme == "nord"
+
+
+@pytest.mark.asyncio
 async def test_app_scrolls_command_suggestions(monkeypatch) -> None:
     def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
         return startup_config

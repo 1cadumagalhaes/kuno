@@ -37,7 +37,6 @@ class KunoApp(App[None]):
     MAX_COMMAND_SUGGESTIONS = 4
     theme = "nord"
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
-        ("a", "about", "About"),
         ("d", "toggle_details", "Details"),
         ("colon", "open_command_bar", "Command"),
         ("escape", "close_command_bar", "Close"),
@@ -236,6 +235,8 @@ class KunoApp(App[None]):
         match command.name:
             case "about":
                 self._command_about()
+            case "keys":
+                self._command_keys()
             case "pods":
                 self._command_pods()
             case "refresh":
@@ -244,6 +245,8 @@ class KunoApp(App[None]):
                 self._command_show_details()
             case "hide-details":
                 self._command_hide_details()
+            case "theme":
+                self._command_theme(command.argument)
             case "ns":
                 if command.argument is None:
                     raise ValueError("Command 'ns' requires an argument")
@@ -254,7 +257,7 @@ class KunoApp(App[None]):
                 self._command_context(command.argument)
             case "help":
                 self.notify(
-                    "Commands: about, pods, refresh, details, hide-details, ns <ns>, ctx <ctx>"
+                    "Commands: about, keys, pods, refresh, details, hide-details, theme [name], ns <ns>, ctx <ctx>"
                 )
             case _:
                 self.notify(f"Unknown command: {command.name}", severity="error")
@@ -262,11 +265,14 @@ class KunoApp(App[None]):
     def _command_about(self) -> None:
         self.push_screen(AboutScreen())
 
-    def action_about(self) -> None:
-        self._command_about()
-
     def _command_pods(self) -> None:
         self.query_one("#pod-table", DataTable).focus()
+
+    def _command_keys(self) -> None:
+        if self.screen.query("HelpPanel"):
+            self.action_hide_help_panel()
+        else:
+            self.action_show_help_panel()
 
     def _command_refresh(self) -> None:
         self.load_pods()
@@ -274,6 +280,13 @@ class KunoApp(App[None]):
 
     def action_refresh_pods(self) -> None:
         self._command_refresh()
+
+    def _command_theme(self, theme_name: str | None) -> None:
+        if theme_name is None:
+            self.action_change_theme()
+            return
+        self.theme = theme_name
+        self.notify(f"Switched theme to {self.theme}")
 
     def _command_show_details(self) -> None:
         if not self.details_visible:
@@ -313,6 +326,7 @@ class KunoApp(App[None]):
             raw,
             contexts=self.available_contexts,
             namespaces=self.available_namespaces,
+            themes=sorted(self.available_themes),
         )
         self.command_suggestion_index = 0
         self._render_command_suggestions()
