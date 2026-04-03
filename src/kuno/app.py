@@ -43,6 +43,7 @@ from kuno.k8s.resources import (
     render_statefulset_details,
     truncate_for_table,
 )
+from kuno.logs import LogMode, format_log_line
 from kuno.models import (
     ContainerSummary,
     ContextSummary,
@@ -95,6 +96,7 @@ class LogsScreen(Screen[None]):
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("escape", "close", "Back"),
         ("f", "toggle_follow", "Follow"),
+        ("m", "cycle_mode", "Mode"),
         ("s", "focus_since", "Since"),
         ("slash", "focus_filter", "Filter"),
         ("r", "reload", "Reload"),
@@ -116,6 +118,7 @@ class LogsScreen(Screen[None]):
         self.filter_text = ""
         self.follow_enabled = False
         self.log_lines: list[str] = []
+        self.mode = LogMode.RAW
         self.namespace = namespace
         self.pod_name = pod_name
         self.container_name = container_name
@@ -189,6 +192,15 @@ class LogsScreen(Screen[None]):
         self.follow_enabled = not self.follow_enabled
         self._update_title()
 
+    def action_cycle_mode(self) -> None:
+        self.mode = {
+            LogMode.RAW: LogMode.PRETTY,
+            LogMode.PRETTY: LogMode.STRUCTURED,
+            LogMode.STRUCTURED: LogMode.RAW,
+        }[self.mode]
+        self._update_title()
+        self._render_logs()
+
     def action_toggle_timestamps(self) -> None:
         self.timestamps_enabled = not self.timestamps_enabled
         self._update_title()
@@ -209,10 +221,7 @@ class LogsScreen(Screen[None]):
         output = self.query_one("#logs-output", Log)
         output.clear()
         output.auto_scroll = self.follow_enabled
-        if self.filter_text:
-            lines = [line for line in self.log_lines if self.filter_text in line]
-        else:
-            lines = self.log_lines
+        lines = self._display_lines()
         if self.wrap_enabled:
             lines = self._wrap_lines(lines)
         if lines:
@@ -237,6 +246,7 @@ class LogsScreen(Screen[None]):
 
     def _title_text(self, target: str) -> str:
         follow = "on" if self.follow_enabled else "off"
+        mode = self.mode.value
         timestamps = "on" if self.timestamps_enabled else "off"
         wrap = "on" if self.wrap_enabled else "off"
         return (
@@ -244,7 +254,7 @@ class LogsScreen(Screen[None]):
             f"context: {self.context}\n"
             f"namespace: {self.namespace}\n"
             f"target: {target}\n"
-            f"follow: {follow} [f]  timestamps: {timestamps} [t]  wrap: {wrap} [w]\n"
+            f"mode: {mode} [m]  follow: {follow} [f]  timestamps: {timestamps} [t]  wrap: {wrap} [w]\n"
             f"since: {self.since_text or 'all'} [s]  filter: /  reload: r  clear filter: ctrl+l  back: esc"
         )
 
@@ -258,6 +268,15 @@ class LogsScreen(Screen[None]):
 
     def action_close(self) -> None:
         self.app.pop_screen()
+
+    def _display_lines(self) -> list[str]:
+        lines: list[str] = []
+        for raw_line in self.log_lines:
+            formatted_lines = format_log_line(raw_line, self.mode)
+            if self.filter_text:
+                formatted_lines = [line for line in formatted_lines if self.filter_text in line]
+            lines.extend(formatted_lines)
+        return lines
 
 
 class KunoApp(App[None]):
