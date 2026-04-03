@@ -213,16 +213,70 @@ class KunoApp(App[None]):
             event.stop()
 
     def get_system_commands(self, screen) -> Iterable[SystemCommand]:
-        yield from super().get_system_commands(screen)
-        yield SystemCommand("Refresh pods", "Reload the current pods table", self._command_refresh)
         yield SystemCommand(
-            "Show details", "Open the details side panel", self._command_show_details
+            "Kuno / Help / About", "Show information about kuno", self._command_about
+        )
+        if screen.query("HelpPanel"):
+            yield SystemCommand(
+                "Kuno / Help / Keys",
+                "Hide the keys and widget help panel",
+                self.action_hide_help_panel,
+            )
+        else:
+            yield SystemCommand(
+                "Kuno / Help / Keys",
+                "Show help for the focused widget and a summary of available keys",
+                self.action_show_help_panel,
+            )
+        yield SystemCommand(
+            "Kuno / Config / Theme",
+            "Open the theme selector",
+            self.action_change_theme,
+        )
+        for theme_name in sorted(self.available_themes):
+            yield SystemCommand(
+                f"Kuno / Config / Theme / {theme_name}",
+                f"Switch to the {theme_name} theme",
+                lambda theme_name=theme_name: self._command_theme(theme_name),
+                discover=False,
+            )
+        for context_name in self.available_contexts:
+            yield SystemCommand(
+                f"Kuno / Config / Context / {context_name}",
+                f"Switch to the {context_name} context",
+                lambda context_name=context_name: self._command_context(context_name),
+                discover=False,
+            )
+        for namespace in self.available_namespaces:
+            yield SystemCommand(
+                f"Kuno / Config / Namespace / {namespace}",
+                f"Switch to the {namespace} namespace",
+                lambda namespace=namespace: self._command_namespace(namespace),
+                discover=False,
+            )
+        yield SystemCommand(
+            "Kuno / View / Pods",
+            "Focus the pods table",
+            self._command_pods,
         )
         yield SystemCommand(
-            "Hide details", "Close the details side panel", self._command_hide_details
+            "Kuno / View / Pods / Refresh",
+            "Reload the current pods table",
+            self._command_refresh,
         )
-        yield SystemCommand("Pods view", "Focus the pods table", self._command_pods)
-        yield SystemCommand("About", "Show information about kuno", self._command_about)
+        if self.details_visible:
+            yield SystemCommand(
+                "Kuno / View / Pods / Details / Hide",
+                "Close the details side panel",
+                self._command_hide_details,
+            )
+        else:
+            yield SystemCommand(
+                "Kuno / View / Pods / Details / Show",
+                "Open the details side panel",
+                self._command_show_details,
+            )
+        yield SystemCommand("App / Quit", "Quit the application", self.action_quit)
 
     def execute_command(self, raw: str) -> None:
         try:

@@ -493,6 +493,49 @@ async def test_app_executes_theme_command(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_app_groups_system_commands(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
+        return []
+
+    async def fake_list_namespaces(kube_client: FakeKubeClient) -> list[str]:
+        return ["airflow", "billing"]
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+    monkeypatch.setattr("kuno.app.load_available_context_names", lambda: ["dev", "prod"])
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
+    monkeypatch.setattr("kuno.app.list_namespaces", fake_list_namespaces)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        titles = [command.title for command in app.get_system_commands(app.screen)]
+        assert "Kuno / Help / About" in titles
+        assert "Kuno / Help / Keys" in titles
+        assert "Kuno / Config / Theme" in titles
+        assert "Kuno / Config / Context / dev" in titles
+        assert "Kuno / Config / Namespace / airflow" in titles
+        assert "Kuno / View / Pods" in titles
+        assert "Kuno / View / Pods / Refresh" in titles
+        assert "App / Quit" in titles
+        assert all("Maximize" not in title for title in titles)
+
+
+@pytest.mark.asyncio
 async def test_app_scrolls_command_suggestions(monkeypatch) -> None:
     def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
         return startup_config
