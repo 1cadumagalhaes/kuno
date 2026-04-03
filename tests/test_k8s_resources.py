@@ -5,9 +5,11 @@ import pytest
 
 from kuno.k8s.resources import (
     container_summary,
+    deployment_summary_from_api_item,
     format_age,
     format_cpu_requests,
     format_memory_requests,
+    list_deployments,
     list_namespaces,
     list_pods,
     pod_ready,
@@ -16,7 +18,7 @@ from kuno.k8s.resources import (
     render_pod_details,
     truncate_for_table,
 )
-from kuno.models import PodSummary
+from kuno.models import DeploymentSummary, PodSummary
 
 
 def test_pod_summary_from_api_item_reads_operational_fields() -> None:
@@ -231,3 +233,76 @@ async def test_list_namespaces_maps_api_items() -> None:
     kube_client = SimpleNamespace(core_v1=FakeCoreV1())
 
     assert await list_namespaces(kube_client) == ["airflow", "billing"]
+
+
+def test_deployment_summary_from_api_item_reads_operational_fields() -> None:
+    item = SimpleNamespace(
+        metadata=SimpleNamespace(
+            name="api",
+            creation_timestamp=datetime(2026, 4, 2, 11, 0, tzinfo=UTC),
+        ),
+        spec=SimpleNamespace(
+            replicas=3,
+            template=SimpleNamespace(
+                spec=SimpleNamespace(
+                    containers=[
+                        SimpleNamespace(
+                            name="api",
+                            resources=SimpleNamespace(requests={"cpu": "250m", "memory": "128Mi"}),
+                        ),
+                        SimpleNamespace(
+                            name="sidecar",
+                            resources=SimpleNamespace(requests={"cpu": "500m", "memory": "256Mi"}),
+                        ),
+                    ]
+                )
+            ),
+        ),
+        status=SimpleNamespace(ready_replicas=2, updated_replicas=3, available_replicas=2),
+    )
+
+    assert deployment_summary_from_api_item(
+        item, now=datetime(2026, 4, 2, 12, 0, tzinfo=UTC)
+    ) == DeploymentSummary(
+        name="api",
+        ready="2/3",
+        up_to_date=3,
+        available=2,
+        age="1h",
+        containers="api,sidecar",
+        cpu="750m",
+        memory="384Mi",
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_deployments_maps_api_items() -> None:
+    items = [
+        SimpleNamespace(
+            metadata=SimpleNamespace(name="api"),
+            spec=SimpleNamespace(
+                replicas=2, template=SimpleNamespace(spec=SimpleNamespace(containers=[]))
+            ),
+            status=SimpleNamespace(ready_replicas=1, updated_replicas=2, available_replicas=1),
+        )
+    ]
+
+    class FakeAppsV1:
+        async def list_namespaced_deployment(self, namespace: str) -> SimpleNamespace:
+            assert namespace == "payments"
+            return SimpleNamespace(items=items)
+
+    kube_client = SimpleNamespace(apps_v1=FakeAppsV1())
+
+    assert await list_deployments(kube_client, "payments") == [
+        DeploymentSummary(
+            name="api",
+            ready="1/2",
+            up_to_date=2,
+            available=1,
+            age="-",
+            containers="-",
+            cpu="-",
+            memory="-",
+        )
+    ]

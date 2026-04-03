@@ -13,8 +13,15 @@ from textual.widgets import DataTable, Footer, Input, Static
 from kuno.commands import ParsedCommand, parse_command, suggest_commands
 from kuno.k8s.client import KubeClient
 from kuno.k8s.config import UnknownContextError, load_available_context_names, load_startup_targets
-from kuno.k8s.resources import list_namespaces, list_pods, render_pod_details, truncate_for_table
-from kuno.models import PodSummary, StartupConfig
+from kuno.k8s.resources import (
+    list_deployments,
+    list_namespaces,
+    list_pods,
+    render_deployment_details,
+    render_pod_details,
+    truncate_for_table,
+)
+from kuno.models import DeploymentSummary, ExplorerView, PodSummary, StartupConfig
 
 
 class AboutScreen(ModalScreen[None]):
@@ -50,8 +57,10 @@ class KunoApp(App[None]):
         self.command_bar_visible = False
         self.command_suggestions: list[str] = []
         self.command_suggestion_index = 0
+        self.current_view = ExplorerView.PODS
         self.details_visible = False
         self.startup_config = startup_config
+        self.deployments: list[DeploymentSummary] = []
         self.pods: list[PodSummary] = []
         self.resolved_startup_config: StartupConfig | None = None
 
@@ -59,11 +68,11 @@ class KunoApp(App[None]):
         yield Static(self._summary_text(), id="startup-summary")
         with Horizontal(id="explorer"):
             with Vertical(id="pod-panel"):
-                yield Static("Pods", classes="panel-title")
+                yield Static(self._panel_title(), id="table-title", classes="panel-title")
                 yield DataTable(id="pod-table")
             with Vertical(id="details-panel"):
-                yield Static("Details", classes="panel-title")
-                yield Static("pod\n(loading)", id="pod-details")
+                yield Static(self._details_title(), id="details-title", classes="panel-title")
+                yield Static(f"{self._view_singular()}\n(loading)", id="pod-details")
         with Vertical(id="command-area"):
             with Horizontal(id="command-bar"):
                 yield Static(":", id="command-prefix")
@@ -82,8 +91,7 @@ class KunoApp(App[None]):
         pod_table.focus()
         pod_table.cursor_type = "row"
         pod_table.zebra_stripes = True
-        pod_table.add_column("Name", width=56)
-        pod_table.add_columns("Ready", "Status", "Restarts", "Age", "CPU", "Memory", "Containers")
+        self._configure_table_columns()
         self.available_contexts = load_available_context_names()
         try:
             self.resolved_startup_config = load_startup_targets(self.startup_config)
@@ -93,54 +101,76 @@ class KunoApp(App[None]):
             return
 
         summary.update(self._summary_text())
-        self.load_pods()
+        self.refresh_current_view()
 
     @work(exclusive=True)
-    async def load_pods(self) -> None:
+    async def refresh_current_view(self) -> None:
         pod_details = self.query_one("#pod-details", Static)
         if self.resolved_startup_config is None:
-            pod_details.update("pod\n(startup not resolved)")
+            pod_details.update(f"{self._view_singular()}\n(startup not resolved)")
             return
 
         context = self.resolved_startup_config.context
         namespace = self.resolved_startup_config.namespace
         if context is None or namespace is None:
-            pod_details.update("pod\n(startup not resolved)")
+            pod_details.update(f"{self._view_singular()}\n(startup not resolved)")
             return
 
         try:
             async with KubeClient(context=context) as kube_client:
-                pods = await list_pods(kube_client, namespace)
+                if self.current_view is ExplorerView.PODS:
+                    self.pods = await list_pods(kube_client, namespace)
+                    self.deployments = []
+                else:
+                    self.deployments = await list_deployments(kube_client, namespace)
+                    self.pods = []
                 with suppress(Exception):
                     self.available_namespaces = await list_namespaces(kube_client)
         except Exception as error:
             self.pods = []
+            self.deployments = []
             await self._render_pod_table()
-            pod_details.update(f"pod\n(error: {error})")
+            pod_details.update(f"{self._view_singular()}\n(error: {error})")
             return
 
-        self.pods = pods
         await self._render_pod_table()
-        if self.pods:
+        if self._current_rows():
             self._update_pod_details(0)
         else:
-            pod_details.update("pod\n(no pods found)")
+            pod_details.update(f"{self._view_singular()}\n(no {self.current_view.value} found)")
 
     async def _render_pod_table(self) -> None:
         pod_table = self.query_one("#pod-table", DataTable)
+        self.query_one("#table-title", Static).update(self._panel_title())
+        self.query_one("#details-title", Static).update(self._details_title())
+        self._configure_table_columns()
         pod_table.clear()
-        for pod in self.pods:
-            pod_table.add_row(
-                truncate_for_table(pod.name),
-                pod.ready,
-                pod.status,
-                str(pod.restarts),
-                pod.age,
-                pod.cpu,
-                pod.memory,
-                pod.containers,
-                key=pod.name,
-            )
+        if self.current_view is ExplorerView.PODS:
+            for pod in self.pods:
+                pod_table.add_row(
+                    truncate_for_table(pod.name),
+                    pod.ready,
+                    pod.status,
+                    str(pod.restarts),
+                    pod.age,
+                    pod.cpu,
+                    pod.memory,
+                    pod.containers,
+                    key=pod.name,
+                )
+        else:
+            for deployment in self.deployments:
+                pod_table.add_row(
+                    truncate_for_table(deployment.name),
+                    deployment.ready,
+                    str(deployment.up_to_date),
+                    str(deployment.available),
+                    deployment.age,
+                    deployment.cpu,
+                    deployment.memory,
+                    deployment.containers,
+                    key=deployment.name,
+                )
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if event.data_table.id != "pod-table":
@@ -258,8 +288,13 @@ class KunoApp(App[None]):
             self._command_pods,
         )
         yield SystemCommand(
-            "Refresh pods",
-            "Reload the current pods table",
+            "Deployments",
+            "Show deployments in the main table",
+            self._command_deployments,
+        )
+        yield SystemCommand(
+            f"Refresh {self.current_view.value}",
+            f"Reload the current {self.current_view.value} table",
             self._command_refresh,
         )
         if self.details_visible:
@@ -289,6 +324,8 @@ class KunoApp(App[None]):
                 self._command_about()
             case "keys":
                 self._command_keys()
+            case "deploy":
+                self._command_deployments()
             case "pods":
                 self._command_pods()
             case "refresh":
@@ -318,6 +355,15 @@ class KunoApp(App[None]):
         self.push_screen(AboutScreen())
 
     def _command_pods(self) -> None:
+        if self.current_view is not ExplorerView.PODS:
+            self.current_view = ExplorerView.PODS
+            self.refresh_current_view()
+        self.query_one("#pod-table", DataTable).focus()
+
+    def _command_deployments(self) -> None:
+        if self.current_view is not ExplorerView.DEPLOYMENTS:
+            self.current_view = ExplorerView.DEPLOYMENTS
+            self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
 
     def _command_keys(self) -> None:
@@ -327,8 +373,8 @@ class KunoApp(App[None]):
             self.action_show_help_panel()
 
     def _command_refresh(self) -> None:
-        self.load_pods()
-        self.notify("Refreshing pods")
+        self.refresh_current_view()
+        self.notify(f"Refreshing {self.current_view.value}")
 
     def action_refresh_pods(self) -> None:
         self._command_refresh()
@@ -356,7 +402,7 @@ class KunoApp(App[None]):
         current = self._require_target()
         self.resolved_startup_config = StartupConfig(context=current.context, namespace=namespace)
         self.query_one("#startup-summary", Static).update(self._summary_text())
-        self.load_pods()
+        self.refresh_current_view()
         self.notify(f"Switched namespace to {namespace}")
 
     def _command_context(self, context: str) -> None:
@@ -365,7 +411,7 @@ class KunoApp(App[None]):
             StartupConfig(context=context, namespace=current.namespace)
         )
         self.query_one("#startup-summary", Static).update(self._summary_text())
-        self.load_pods()
+        self.refresh_current_view()
         self.notify(f"Switched context to {self.resolved_startup_config.context}")
 
     def _require_target(self) -> StartupConfig:
@@ -418,11 +464,39 @@ class KunoApp(App[None]):
 
     def _update_pod_details(self, index: int | None) -> None:
         pod_details = self.query_one("#pod-details", Static)
-        if index is None or index >= len(self.pods):
-            pod_details.update("pod\n(no pod selected)")
+        rows = self._current_rows()
+        if index is None or index >= len(rows):
+            pod_details.update(f"{self._view_singular()}\n(no {self._view_singular()} selected)")
             return
+        if self.current_view is ExplorerView.PODS:
+            pod_details.update(render_pod_details(self.pods[index]))
+        else:
+            pod_details.update(render_deployment_details(self.deployments[index]))
 
-        pod_details.update(render_pod_details(self.pods[index]))
+    def _configure_table_columns(self) -> None:
+        pod_table = self.query_one("#pod-table", DataTable)
+        pod_table.clear(columns=True)
+        pod_table.add_column("Name", width=56)
+        if self.current_view is ExplorerView.PODS:
+            pod_table.add_columns(
+                "Ready", "Status", "Restarts", "Age", "CPU", "Memory", "Containers"
+            )
+        else:
+            pod_table.add_columns(
+                "Ready", "Up-to-date", "Available", "Age", "CPU", "Memory", "Containers"
+            )
+
+    def _current_rows(self) -> list[PodSummary] | list[DeploymentSummary]:
+        return self.pods if self.current_view is ExplorerView.PODS else self.deployments
+
+    def _panel_title(self) -> str:
+        return "Pods" if self.current_view is ExplorerView.PODS else "Deployments"
+
+    def _details_title(self) -> str:
+        return "Pod Details" if self.current_view is ExplorerView.PODS else "Deployment Details"
+
+    def _view_singular(self) -> str:
+        return "pod" if self.current_view is ExplorerView.PODS else "deployment"
 
     def _summary_text(self) -> str:
         startup_config = self.resolved_startup_config or self.startup_config

@@ -4,13 +4,17 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Protocol
 
-from kubernetes_asyncio.client import CoreV1Api
+from kubernetes_asyncio.client import AppsV1Api, CoreV1Api
 
-from kuno.models import PodSummary
+from kuno.models import DeploymentSummary, PodSummary
 
 
 class HasCoreV1(Protocol):
     core_v1: CoreV1Api | Any | None
+
+
+class HasAppsV1(Protocol):
+    apps_v1: AppsV1Api | Any | None
 
 
 async def list_pods(kube_client: HasCoreV1, namespace: str) -> list[PodSummary]:
@@ -34,6 +38,15 @@ async def list_namespaces(kube_client: HasCoreV1) -> list[str]:
         if isinstance(name, str) and name:
             names.append(name)
     return sorted(names)
+
+
+async def list_deployments(kube_client: HasAppsV1, namespace: str) -> list[DeploymentSummary]:
+    if kube_client.apps_v1 is None:
+        raise RuntimeError("Kubernetes client is not connected")
+
+    deployment_list = await kube_client.apps_v1.list_namespaced_deployment(namespace)
+    current = datetime.now(UTC)
+    return [deployment_summary_from_api_item(item, now=current) for item in deployment_list.items]
 
 
 def pod_summary_from_api_item(item: Any, now: datetime | None = None) -> PodSummary:
@@ -62,6 +75,35 @@ def pod_summary_from_api_item(item: Any, now: datetime | None = None) -> PodSumm
         containers=container_summary(containers),
         cpu=format_cpu_requests(containers),
         memory=format_memory_requests(containers),
+    )
+
+
+def deployment_summary_from_api_item(item: Any, now: datetime | None = None) -> DeploymentSummary:
+    metadata = getattr(item, "metadata", None)
+    spec = getattr(item, "spec", None)
+    status = getattr(item, "status", None)
+    name = getattr(metadata, "name", None)
+    creation_timestamp = getattr(metadata, "creation_timestamp", None)
+    containers = getattr(getattr(spec, "template", None), "spec", None)
+    pod_containers = getattr(containers, "containers", None)
+
+    if not isinstance(name, str) or not name:
+        raise ValueError("Deployment is missing a valid name")
+
+    desired = int(getattr(spec, "replicas", 0) or 0)
+    ready = int(getattr(status, "ready_replicas", 0) or 0)
+    updated = int(getattr(status, "updated_replicas", 0) or 0)
+    available = int(getattr(status, "available_replicas", 0) or 0)
+
+    return DeploymentSummary(
+        name=name,
+        ready=f"{ready}/{desired}",
+        up_to_date=updated,
+        available=available,
+        age=format_age(creation_timestamp, now=now),
+        containers=container_summary(pod_containers),
+        cpu=format_cpu_requests(pod_containers),
+        memory=format_memory_requests(pod_containers),
     )
 
 
@@ -194,4 +236,18 @@ def render_pod_details(pod: PodSummary) -> str:
         f"containers: {pod.containers}\n"
         f"cpu: {pod.cpu}\n"
         f"memory: {pod.memory}"
+    )
+
+
+def render_deployment_details(deployment: DeploymentSummary) -> str:
+    return (
+        "deployment\n"
+        f"name: {deployment.name}\n"
+        f"ready: {deployment.ready}\n"
+        f"up-to-date: {deployment.up_to_date}\n"
+        f"available: {deployment.available}\n"
+        f"age: {deployment.age}\n"
+        f"containers: {deployment.containers}\n"
+        f"cpu: {deployment.cpu}\n"
+        f"memory: {deployment.memory}"
     )

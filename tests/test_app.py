@@ -4,7 +4,7 @@ from textual.widgets import DataTable, Input, Static
 
 from kuno.app import AboutScreen, KunoApp
 from kuno.k8s.config import UnknownContextError
-from kuno.models import PodSummary, StartupConfig
+from kuno.models import DeploymentSummary, ExplorerView, PodSummary, StartupConfig
 
 
 @pytest.mark.asyncio
@@ -490,6 +490,116 @@ async def test_app_executes_theme_command(monkeypatch) -> None:
         app.execute_command("theme nord")
         await pilot.pause()
         assert app.theme == "nord"
+
+
+@pytest.mark.asyncio
+async def test_app_switches_to_deployments_view(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
+        return []
+
+    async def fake_list_deployments(
+        kube_client: FakeKubeClient, namespace: str
+    ) -> list[DeploymentSummary]:
+        assert kube_client.context == "prod"
+        assert namespace == "payments"
+        return [
+            DeploymentSummary(
+                name="api",
+                ready="2/3",
+                up_to_date=3,
+                available=2,
+                age="1h",
+                containers="api,sidecar",
+                cpu="750m",
+                memory="384Mi",
+            )
+        ]
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
+    monkeypatch.setattr("kuno.app.list_deployments", fake_list_deployments)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.execute_command("deploy")
+        await pilot.pause()
+        table_title = app.query_one("#table-title", Static)
+        details_title = app.query_one("#details-title", Static)
+        pod_table = app.query_one("#pod-table", DataTable)
+        assert app.current_view is ExplorerView.DEPLOYMENTS
+        assert table_title.content == "Deployments"
+        assert details_title.content == "Deployment Details"
+        assert pod_table.row_count == 1
+
+
+@pytest.mark.asyncio
+async def test_app_renders_deployment_details(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
+        return []
+
+    async def fake_list_deployments(
+        kube_client: FakeKubeClient, namespace: str
+    ) -> list[DeploymentSummary]:
+        return [
+            DeploymentSummary(
+                name="api",
+                ready="2/3",
+                up_to_date=3,
+                available=2,
+                age="1h",
+                containers="api,sidecar",
+                cpu="750m",
+                memory="384Mi",
+            )
+        ]
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
+    monkeypatch.setattr("kuno.app.list_deployments", fake_list_deployments)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.execute_command("deploy")
+        await pilot.pause()
+        await pilot.press("d")
+        await pilot.pause()
+        pod_details = app.query_one("#pod-details", Static)
+        assert (
+            pod_details.content
+            == "deployment\nname: api\nready: 2/3\nup-to-date: 3\navailable: 2\nage: 1h\ncontainers: api,sidecar\ncpu: 750m\nmemory: 384Mi"
+        )
 
 
 @pytest.mark.asyncio

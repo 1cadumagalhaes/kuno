@@ -7,6 +7,7 @@ from kuno.commands import ParsedCommand, parse_command, suggest_commands
     ("raw", "expected"),
     [
         (":about", ParsedCommand(name="about")),
+        (":deploy", ParsedCommand(name="deploy")),
         (":keys", ParsedCommand(name="keys")),
         (":pods", ParsedCommand(name="pods")),
         ("refresh", ParsedCommand(name="refresh")),
@@ -35,6 +36,7 @@ def test_parse_command_rejects_invalid_input(raw: str) -> None:
             "",
             [
                 "about",
+                "deploy",
                 "keys",
                 "pods",
                 "refresh",
@@ -46,6 +48,7 @@ def test_parse_command_rejects_invalid_input(raw: str) -> None:
                 "help",
             ],
         ),
+        ("de", ["deploy", "details"]),
         ("re", ["refresh"]),
         ("ns ", ["ns airflow", "ns billing"]),
         ("ns bi", ["ns billing"]),
