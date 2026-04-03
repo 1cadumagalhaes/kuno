@@ -991,7 +991,7 @@ async def test_logs_screen_opens_line_detail(monkeypatch) -> None:
         app.execute_command("logs")
         await pilot.pause()
         assert isinstance(app.screen, LogsScreen)
-        await pilot.press("enter")
+        await pilot.press("d")
         await pilot.pause()
         assert isinstance(app.screen, LogDetailScreen)
 

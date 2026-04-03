@@ -117,7 +117,7 @@ class LogDetailScreen(ModalScreen[None]):
 class LogsScreen(Screen[None]):
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("escape", "close", "Back"),
-        ("enter", "open_detail", "Detail"),
+        ("d", "open_detail", "Detail"),
         ("y", "copy_logs", "Copy"),
         ("f", "toggle_follow", "Follow"),
         ("down", "next_line", "Next"),
