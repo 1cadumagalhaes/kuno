@@ -7,6 +7,7 @@ from kuno.commands import ParsedCommand, parse_command, suggest_commands
     ("raw", "expected"),
     [
         (":about", ParsedCommand(name="about")),
+        (":containers", ParsedCommand(name="containers")),
         (":deploy", ParsedCommand(name="deploy")),
         (":keys", ParsedCommand(name="keys")),
         (":pods", ParsedCommand(name="pods")),
@@ -40,6 +41,7 @@ def test_parse_command_rejects_invalid_input(raw: str) -> None:
             "",
             [
                 "about",
+                "containers",
                 "contexts",
                 "deploy",
                 "keys",
@@ -58,6 +60,7 @@ def test_parse_command_rejects_invalid_input(raw: str) -> None:
                 "help",
             ],
         ),
+        ("co", ["containers", "contexts"]),
         ("de", ["deploy", "details"]),
         ("pv", ["pvc"]),
         ("re", ["refresh"]),

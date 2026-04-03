@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from kuno.k8s.resources import (
+    container_summaries_from_pod,
     container_summary,
     deployment_summary_from_api_item,
     format_age,
@@ -12,6 +13,7 @@ from kuno.k8s.resources import (
     list_deployments,
     list_namespace_summaries,
     list_namespaces,
+    list_pod_containers,
     list_pods,
     list_pvcs,
     list_secrets,
@@ -22,6 +24,7 @@ from kuno.k8s.resources import (
     pod_restarts,
     pod_summary_from_api_item,
     pvc_summary_from_api_item,
+    render_container_details,
     render_context_details,
     render_namespace_details,
     render_pod_details,
@@ -35,6 +38,7 @@ from kuno.k8s.resources import (
     truncate_for_table,
 )
 from kuno.models import (
+    ContainerSummary,
     ContextSummary,
     DeploymentSummary,
     NamespaceSummary,
@@ -695,4 +699,128 @@ def test_render_context_details_formats_context() -> None:
             )
         )
         == "context\nname: prod\ncluster: prod-cluster\nuser: prod-user\nnamespace: airflow\ncurrent: *"
+    )
+
+
+def test_container_summaries_from_pod_reads_operational_fields() -> None:
+    pod = SimpleNamespace(
+        metadata=SimpleNamespace(name="api-1"),
+        spec=SimpleNamespace(
+            containers=[
+                SimpleNamespace(
+                    name="api",
+                    image="ghcr.io/example/api:1.0.0",
+                    resources=SimpleNamespace(requests={"cpu": "250m", "memory": "128Mi"}),
+                ),
+                SimpleNamespace(
+                    name="sidecar",
+                    image="ghcr.io/example/sidecar:1.0.0",
+                    resources=SimpleNamespace(requests={"cpu": "100m", "memory": "64Mi"}),
+                ),
+            ]
+        ),
+        status=SimpleNamespace(
+            container_statuses=[
+                SimpleNamespace(
+                    name="api",
+                    ready=True,
+                    restart_count=1,
+                    state=SimpleNamespace(running=SimpleNamespace()),
+                ),
+                SimpleNamespace(
+                    name="sidecar",
+                    ready=False,
+                    restart_count=0,
+                    state=SimpleNamespace(waiting=SimpleNamespace()),
+                ),
+            ]
+        ),
+    )
+
+    assert container_summaries_from_pod(pod) == [
+        ContainerSummary(
+            name="api",
+            pod="api-1",
+            ready="yes",
+            state="Running",
+            restarts=1,
+            image="ghcr.io/example/api:1.0.0",
+            cpu="250m",
+            memory="128Mi",
+        ),
+        ContainerSummary(
+            name="sidecar",
+            pod="api-1",
+            ready="no",
+            state="Waiting",
+            restarts=0,
+            image="ghcr.io/example/sidecar:1.0.0",
+            cpu="100m",
+            memory="64Mi",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_pod_containers_reads_selected_pod() -> None:
+    pod = SimpleNamespace(
+        metadata=SimpleNamespace(name="api-1"),
+        spec=SimpleNamespace(
+            containers=[
+                SimpleNamespace(
+                    name="api",
+                    image="ghcr.io/example/api:1.0.0",
+                    resources=SimpleNamespace(requests={}),
+                )
+            ]
+        ),
+        status=SimpleNamespace(
+            container_statuses=[
+                SimpleNamespace(
+                    name="api",
+                    ready=True,
+                    restart_count=0,
+                    state=SimpleNamespace(running=SimpleNamespace()),
+                )
+            ]
+        ),
+    )
+
+    class FakeCoreV1:
+        async def read_namespaced_pod(self, name: str, namespace: str) -> SimpleNamespace:
+            assert name == "api-1"
+            assert namespace == "payments"
+            return pod
+
+    kube_client = SimpleNamespace(core_v1=FakeCoreV1())
+
+    assert await list_pod_containers(kube_client, "payments", "api-1") == [
+        ContainerSummary(
+            name="api",
+            pod="api-1",
+            ready="yes",
+            state="Running",
+            restarts=0,
+            image="ghcr.io/example/api:1.0.0",
+            cpu="-",
+            memory="-",
+        )
+    ]
+
+
+def test_render_container_details_formats_container() -> None:
+    assert (
+        render_container_details(
+            ContainerSummary(
+                name="api",
+                pod="api-1",
+                ready="yes",
+                state="Running",
+                restarts=1,
+                image="ghcr.io/example/api:1.0.0",
+                cpu="250m",
+                memory="128Mi",
+            )
+        )
+        == "container\nname: api\npod: api-1\nready: yes\nstate: Running\nrestarts: 1\nimage: ghcr.io/example/api:1.0.0\ncpu: 250m\nmemory: 128Mi"
     )

@@ -5,6 +5,7 @@ from textual.widgets import DataTable, Input, Static
 from kuno.app import AboutScreen, KunoApp
 from kuno.k8s.config import UnknownContextError
 from kuno.models import (
+    ContainerSummary,
     ContextSummary,
     DeploymentSummary,
     ExplorerView,
@@ -187,6 +188,140 @@ async def test_app_selecting_namespace_opens_pods(monkeypatch) -> None:
         assert app.current_view is ExplorerView.PODS
         assert table_title.content == "Pods"
         assert pod_table.row_count == 1
+
+
+@pytest.mark.asyncio
+async def test_app_selecting_pod_opens_containers(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
+        return [
+            PodSummary(
+                name="api-1",
+                ready="1/1",
+                status="Running",
+                restarts=0,
+                age="1m",
+                containers="api,sidecar",
+                cpu="350m",
+                memory="192Mi",
+            )
+        ]
+
+    async def fake_list_pod_containers(
+        kube_client: FakeKubeClient, namespace: str, pod_name: str
+    ) -> list[ContainerSummary]:
+        assert pod_name == "api-1"
+        return [
+            ContainerSummary(
+                name="api",
+                pod="api-1",
+                ready="yes",
+                state="Running",
+                restarts=0,
+                image="ghcr.io/example/api:1.0.0",
+                cpu="250m",
+                memory="128Mi",
+            )
+        ]
+
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
+    monkeypatch.setattr("kuno.app.list_pod_containers", fake_list_pod_containers)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app.current_view = ExplorerView.PODS
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        table_title = app.query_one("#table-title", Static)
+        pod_table = app.query_one("#pod-table", DataTable)
+        assert app.current_view is ExplorerView.CONTAINERS
+        assert app.container_pod_name == "api-1"
+        assert table_title.content == "Containers (api-1)"
+        assert pod_table.row_count == 1
+
+
+@pytest.mark.asyncio
+async def test_app_renders_container_details(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
+        return [
+            PodSummary(
+                name="api-1",
+                ready="1/1",
+                status="Running",
+                restarts=0,
+                age="1m",
+                containers="api",
+                cpu="250m",
+                memory="128Mi",
+            )
+        ]
+
+    async def fake_list_pod_containers(
+        kube_client: FakeKubeClient, namespace: str, pod_name: str
+    ) -> list[ContainerSummary]:
+        return [
+            ContainerSummary(
+                name="api",
+                pod="api-1",
+                ready="yes",
+                state="Running",
+                restarts=1,
+                image="ghcr.io/example/api:1.0.0",
+                cpu="250m",
+                memory="128Mi",
+            )
+        ]
+
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
+    monkeypatch.setattr("kuno.app.list_pod_containers", fake_list_pod_containers)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app.current_view = ExplorerView.PODS
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("d")
+        await pilot.pause()
+        pod_details = app.query_one("#pod-details", Static)
+        assert (
+            pod_details.content
+            == "container\nname: api\npod: api-1\nready: yes\nstate: Running\nrestarts: 1\nimage: ghcr.io/example/api:1.0.0\ncpu: 250m\nmemory: 128Mi"
+        )
 
 
 @pytest.mark.asyncio

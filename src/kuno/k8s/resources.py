@@ -7,6 +7,7 @@ from typing import Any, Protocol
 from kubernetes_asyncio.client import AppsV1Api, CoreV1Api
 
 from kuno.models import (
+    ContainerSummary,
     ContextSummary,
     DeploymentSummary,
     NamespaceSummary,
@@ -33,6 +34,16 @@ async def list_pods(kube_client: HasCoreV1, namespace: str) -> list[PodSummary]:
     pod_list = await kube_client.core_v1.list_namespaced_pod(namespace)
     current = datetime.now(UTC)
     return [pod_summary_from_api_item(item, now=current) for item in pod_list.items]
+
+
+async def list_pod_containers(
+    kube_client: HasCoreV1, namespace: str, pod_name: str
+) -> list[ContainerSummary]:
+    if kube_client.core_v1 is None:
+        raise RuntimeError("Kubernetes client is not connected")
+
+    pod = await kube_client.core_v1.read_namespaced_pod(pod_name, namespace)
+    return container_summaries_from_pod(pod)
 
 
 async def list_namespaces(kube_client: HasCoreV1) -> list[str]:
@@ -137,6 +148,48 @@ def pod_summary_from_api_item(item: Any, now: datetime | None = None) -> PodSumm
     )
 
 
+def container_summaries_from_pod(item: Any) -> list[ContainerSummary]:
+    metadata = getattr(item, "metadata", None)
+    spec = getattr(item, "spec", None)
+    status = getattr(item, "status", None)
+    pod_name = getattr(metadata, "name", None)
+    containers = getattr(spec, "containers", None)
+    statuses = getattr(status, "container_statuses", None)
+
+    if not isinstance(pod_name, str) or not pod_name:
+        raise ValueError("Pod is missing a valid name")
+
+    status_by_name: dict[str, Any] = {}
+    if isinstance(statuses, list):
+        for container_status in statuses:
+            name = getattr(container_status, "name", None)
+            if isinstance(name, str) and name:
+                status_by_name[name] = container_status
+
+    summaries: list[ContainerSummary] = []
+    if not isinstance(containers, list):
+        return summaries
+
+    for container in containers:
+        name = getattr(container, "name", None)
+        if not isinstance(name, str) or not name:
+            continue
+        container_status = status_by_name.get(name)
+        summaries.append(
+            ContainerSummary(
+                name=name,
+                pod=pod_name,
+                ready="yes" if getattr(container_status, "ready", False) else "no",
+                state=container_state(container_status),
+                restarts=int(getattr(container_status, "restart_count", 0) or 0),
+                image=string_or_default(getattr(container, "image", None), "-"),
+                cpu=format_cpu_requests([container]),
+                memory=format_memory_requests([container]),
+            )
+        )
+    return summaries
+
+
 def deployment_summary_from_api_item(item: Any, now: datetime | None = None) -> DeploymentSummary:
     metadata = getattr(item, "metadata", None)
     spec = getattr(item, "spec", None)
@@ -238,6 +291,18 @@ def pvc_summary_from_api_item(item: Any, now: datetime | None = None) -> PvcSumm
         storage_class=string_or_default(getattr(spec, "storage_class_name", None), "-"),
         age=format_age(creation_timestamp, now=now),
     )
+
+
+def container_state(container_status: Any) -> str:
+    if container_status is None:
+        return "Unknown"
+    state = getattr(container_status, "state", None)
+    if state is None:
+        return "Unknown"
+    for name in ("running", "waiting", "terminated"):
+        if getattr(state, name, None) is not None:
+            return name.capitalize()
+    return "Unknown"
 
 
 def namespace_summary_from_api_item(
@@ -514,6 +579,20 @@ def render_context_details(context: ContextSummary) -> str:
         f"user: {context.user}\n"
         f"namespace: {context.namespace}\n"
         f"current: {context.current or 'no'}"
+    )
+
+
+def render_container_details(container: ContainerSummary) -> str:
+    return (
+        "container\n"
+        f"name: {container.name}\n"
+        f"pod: {container.pod}\n"
+        f"ready: {container.ready}\n"
+        f"state: {container.state}\n"
+        f"restarts: {container.restarts}\n"
+        f"image: {container.image}\n"
+        f"cpu: {container.cpu}\n"
+        f"memory: {container.memory}"
     )
 
 

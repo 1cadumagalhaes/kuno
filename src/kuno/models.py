@@ -20,7 +20,20 @@ class PodSummary:
     memory: str
 
 
+@dataclass(slots=True)
+class ContainerSummary:
+    name: str
+    pod: str
+    ready: str
+    state: str
+    restarts: int
+    image: str
+    cpu: str
+    memory: str
+
+
 class ExplorerView(StrEnum):
+    CONTAINERS = "containers"
     CONTEXTS = "contexts"
     NAMESPACES = "namespaces"
     PODS = "pods"
