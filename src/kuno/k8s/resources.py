@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import Any, Protocol
 
 from kubernetes_asyncio.client import CoreV1Api
@@ -35,10 +34,9 @@ def pod_summary_from_api_item(item: Any) -> PodSummary:
     return PodSummary(name=name, phase=phase)
 
 
-def render_pod_summaries(pods: Sequence[PodSummary]) -> str:
-    if not pods:
-        return "pods\n(no pods found)"
+def render_pod_row(pod: PodSummary) -> str:
+    return f"{pod.name} [{pod.phase}]"
 
-    rows = ["pods"]
-    rows.extend(f"{pod.name} [{pod.phase}]" for pod in pods)
-    return "\n".join(rows)
+
+def render_pod_details(pod: PodSummary) -> str:
+    return f"pod\nname: {pod.name}\nphase: {pod.phase}"
