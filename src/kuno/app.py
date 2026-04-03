@@ -199,6 +199,14 @@ class LogsScreen(Screen[None]):
             if self.follow_enabled:
                 self._start_streaming()
 
+    def on_key(self, event: events.Key) -> None:
+        if event.key == "down":
+            self.action_next_line()
+            event.stop()
+        elif event.key == "up":
+            self.action_previous_line()
+            event.stop()
+
     def action_focus_filter(self) -> None:
         self.query_one("#logs-filter", Input).focus()
 
@@ -250,6 +258,10 @@ class LogsScreen(Screen[None]):
         self.notify("Copied logs")
 
     def action_next_line(self) -> None:
+        if self.follow_enabled:
+            self.follow_enabled = False
+            self._stop_streaming()
+            self._update_title()
         visible = self._visible_log_indices()
         if not visible:
             return
@@ -260,6 +272,10 @@ class LogsScreen(Screen[None]):
         self._render_logs()
 
     def action_previous_line(self) -> None:
+        if self.follow_enabled:
+            self.follow_enabled = False
+            self._stop_streaming()
+            self._update_title()
         visible = self._visible_log_indices()
         if not visible:
             return
@@ -413,7 +429,7 @@ class LogsScreen(Screen[None]):
     def _entry_renderables(self, raw_line: str, *, selected: bool) -> list[object]:
         rendered: list[object] = []
         rendered.extend(render_log_line(raw_line, self.mode))
-        if not selected:
+        if not selected or self.follow_enabled:
             return rendered
         highlighted: list[object] = []
         for line in rendered:
