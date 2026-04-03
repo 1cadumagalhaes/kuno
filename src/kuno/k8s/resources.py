@@ -10,6 +10,7 @@ from kuno.models import (
     DeploymentSummary,
     PodSummary,
     PvcSummary,
+    SecretSummary,
     ServiceSummary,
     StatefulSetSummary,
 )
@@ -62,6 +63,15 @@ async def list_pvcs(kube_client: HasCoreV1, namespace: str) -> list[PvcSummary]:
     pvc_list = await kube_client.core_v1.list_namespaced_persistent_volume_claim(namespace)
     current = datetime.now(UTC)
     return [pvc_summary_from_api_item(item, now=current) for item in pvc_list.items]
+
+
+async def list_secrets(kube_client: HasCoreV1, namespace: str) -> list[SecretSummary]:
+    if kube_client.core_v1 is None:
+        raise RuntimeError("Kubernetes client is not connected")
+
+    secret_list = await kube_client.core_v1.list_namespaced_secret(namespace)
+    current = datetime.now(UTC)
+    return [secret_summary_from_api_item(item, now=current) for item in secret_list.items]
 
 
 async def list_deployments(kube_client: HasAppsV1, namespace: str) -> list[DeploymentSummary]:
@@ -210,6 +220,24 @@ def pvc_summary_from_api_item(item: Any, now: datetime | None = None) -> PvcSumm
         capacity=size,
         access=access_modes_summary(getattr(spec, "access_modes", None)),
         storage_class=string_or_default(getattr(spec, "storage_class_name", None), "-"),
+        age=format_age(creation_timestamp, now=now),
+    )
+
+
+def secret_summary_from_api_item(item: Any, now: datetime | None = None) -> SecretSummary:
+    metadata = getattr(item, "metadata", None)
+    name = getattr(metadata, "name", None)
+    creation_timestamp = getattr(metadata, "creation_timestamp", None)
+    data = getattr(item, "data", None)
+
+    if not isinstance(name, str) or not name:
+        raise ValueError("Secret is missing a valid name")
+
+    return SecretSummary(
+        name=name,
+        type=string_or_default(getattr(item, "type", None), "Opaque"),
+        data_items=len(data) if isinstance(data, dict) else 0,
+        immutable="yes" if getattr(item, "immutable", False) else "no",
         age=format_age(creation_timestamp, now=now),
     )
 
@@ -430,4 +458,15 @@ def render_pvc_details(pvc: PvcSummary) -> str:
         f"access: {pvc.access}\n"
         f"storage-class: {pvc.storage_class}\n"
         f"age: {pvc.age}"
+    )
+
+
+def render_secret_details(secret: SecretSummary) -> str:
+    return (
+        "secret\n"
+        f"name: {secret.name}\n"
+        f"type: {secret.type}\n"
+        f"data-items: {secret.data_items}\n"
+        f"immutable: {secret.immutable}\n"
+        f"age: {secret.age}"
     )

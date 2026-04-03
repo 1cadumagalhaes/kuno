@@ -13,6 +13,7 @@ from kuno.k8s.resources import (
     list_namespaces,
     list_pods,
     list_pvcs,
+    list_secrets,
     list_services,
     list_statefulsets,
     pod_ready,
@@ -21,8 +22,10 @@ from kuno.k8s.resources import (
     pvc_summary_from_api_item,
     render_pod_details,
     render_pvc_details,
+    render_secret_details,
     render_service_details,
     render_statefulset_details,
+    secret_summary_from_api_item,
     service_summary_from_api_item,
     statefulset_summary_from_api_item,
     truncate_for_table,
@@ -31,6 +34,7 @@ from kuno.models import (
     DeploymentSummary,
     PodSummary,
     PvcSummary,
+    SecretSummary,
     ServiceSummary,
     StatefulSetSummary,
 )
@@ -558,4 +562,70 @@ def test_render_pvc_details_formats_pvc() -> None:
             )
         )
         == "pvc\nname: data-postgres-0\nstatus: Bound\nvolume: pvc-123\ncapacity: 10Gi\naccess: ReadWriteOnce\nstorage-class: fast-ssd\nage: 1h"
+    )
+
+
+def test_secret_summary_from_api_item_reads_operational_fields() -> None:
+    item = SimpleNamespace(
+        metadata=SimpleNamespace(
+            name="app-secrets",
+            creation_timestamp=datetime(2026, 4, 2, 11, 0, tzinfo=UTC),
+        ),
+        type="Opaque",
+        data={"DATABASE_URL": "...", "API_KEY": "..."},
+        immutable=True,
+    )
+
+    assert secret_summary_from_api_item(
+        item, now=datetime(2026, 4, 2, 12, 0, tzinfo=UTC)
+    ) == SecretSummary(
+        name="app-secrets",
+        type="Opaque",
+        data_items=2,
+        immutable="yes",
+        age="1h",
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_secrets_maps_api_items() -> None:
+    items = [
+        SimpleNamespace(
+            metadata=SimpleNamespace(name="app-secrets"),
+            type="Opaque",
+            data={"DATABASE_URL": "..."},
+            immutable=False,
+        )
+    ]
+
+    class FakeCoreV1:
+        async def list_namespaced_secret(self, namespace: str) -> SimpleNamespace:
+            assert namespace == "payments"
+            return SimpleNamespace(items=items)
+
+    kube_client = SimpleNamespace(core_v1=FakeCoreV1())
+
+    assert await list_secrets(kube_client, "payments") == [
+        SecretSummary(
+            name="app-secrets",
+            type="Opaque",
+            data_items=1,
+            immutable="no",
+            age="-",
+        )
+    ]
+
+
+def test_render_secret_details_formats_secret() -> None:
+    assert (
+        render_secret_details(
+            SecretSummary(
+                name="app-secrets",
+                type="Opaque",
+                data_items=2,
+                immutable="yes",
+                age="1h",
+            )
+        )
+        == "secret\nname: app-secrets\ntype: Opaque\ndata-items: 2\nimmutable: yes\nage: 1h"
     )

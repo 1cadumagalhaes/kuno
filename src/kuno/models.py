@@ -26,6 +26,7 @@ class ExplorerView(StrEnum):
     STATEFULSETS = "statefulsets"
     SERVICES = "services"
     PVC = "pvc"
+    SECRETS = "secrets"
 
 
 @dataclass(slots=True)
@@ -70,4 +71,13 @@ class PvcSummary:
     capacity: str
     access: str
     storage_class: str
+    age: str
+
+
+@dataclass(slots=True)
+class SecretSummary:
+    name: str
+    type: str
+    data_items: int
+    immutable: str
     age: str

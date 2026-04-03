@@ -9,6 +9,7 @@ from kuno.models import (
     ExplorerView,
     PodSummary,
     PvcSummary,
+    SecretSummary,
     ServiceSummary,
     StartupConfig,
     StatefulSetSummary,
@@ -999,6 +1000,150 @@ async def test_app_renders_pvc_details(monkeypatch) -> None:
         assert (
             pod_details.content
             == "pvc\nname: data-postgres-0\nstatus: Bound\nvolume: pvc-123\ncapacity: 10Gi\naccess: ReadWriteOnce\nstorage-class: fast-ssd\nage: 1h"
+        )
+
+
+@pytest.mark.asyncio
+async def test_app_switches_to_secrets_view(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
+        return []
+
+    async def fake_list_deployments(
+        kube_client: FakeKubeClient, namespace: str
+    ) -> list[DeploymentSummary]:
+        return []
+
+    async def fake_list_statefulsets(
+        kube_client: FakeKubeClient, namespace: str
+    ) -> list[StatefulSetSummary]:
+        return []
+
+    async def fake_list_services(
+        kube_client: FakeKubeClient, namespace: str
+    ) -> list[ServiceSummary]:
+        return []
+
+    async def fake_list_pvcs(kube_client: FakeKubeClient, namespace: str) -> list[PvcSummary]:
+        return []
+
+    async def fake_list_secrets(kube_client: FakeKubeClient, namespace: str) -> list[SecretSummary]:
+        assert kube_client.context == "prod"
+        assert namespace == "payments"
+        return [
+            SecretSummary(
+                name="app-secrets",
+                type="Opaque",
+                data_items=2,
+                immutable="yes",
+                age="1h",
+            )
+        ]
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
+    monkeypatch.setattr("kuno.app.list_deployments", fake_list_deployments)
+    monkeypatch.setattr("kuno.app.list_statefulsets", fake_list_statefulsets)
+    monkeypatch.setattr("kuno.app.list_services", fake_list_services)
+    monkeypatch.setattr("kuno.app.list_pvcs", fake_list_pvcs)
+    monkeypatch.setattr("kuno.app.list_secrets", fake_list_secrets)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.execute_command("secrets")
+        await pilot.pause()
+        table_title = app.query_one("#table-title", Static)
+        details_title = app.query_one("#details-title", Static)
+        pod_table = app.query_one("#pod-table", DataTable)
+        assert app.current_view is ExplorerView.SECRETS
+        assert table_title.content == "Secrets"
+        assert details_title.content == "Secret Details"
+        assert pod_table.row_count == 1
+
+
+@pytest.mark.asyncio
+async def test_app_renders_secret_details(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
+        return []
+
+    async def fake_list_deployments(
+        kube_client: FakeKubeClient, namespace: str
+    ) -> list[DeploymentSummary]:
+        return []
+
+    async def fake_list_statefulsets(
+        kube_client: FakeKubeClient, namespace: str
+    ) -> list[StatefulSetSummary]:
+        return []
+
+    async def fake_list_services(
+        kube_client: FakeKubeClient, namespace: str
+    ) -> list[ServiceSummary]:
+        return []
+
+    async def fake_list_pvcs(kube_client: FakeKubeClient, namespace: str) -> list[PvcSummary]:
+        return []
+
+    async def fake_list_secrets(kube_client: FakeKubeClient, namespace: str) -> list[SecretSummary]:
+        return [
+            SecretSummary(
+                name="app-secrets",
+                type="Opaque",
+                data_items=2,
+                immutable="yes",
+                age="1h",
+            )
+        ]
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
+    monkeypatch.setattr("kuno.app.list_deployments", fake_list_deployments)
+    monkeypatch.setattr("kuno.app.list_statefulsets", fake_list_statefulsets)
+    monkeypatch.setattr("kuno.app.list_services", fake_list_services)
+    monkeypatch.setattr("kuno.app.list_pvcs", fake_list_pvcs)
+    monkeypatch.setattr("kuno.app.list_secrets", fake_list_secrets)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.execute_command("secrets")
+        await pilot.pause()
+        await pilot.press("d")
+        await pilot.pause()
+        pod_details = app.query_one("#pod-details", Static)
+        assert (
+            pod_details.content
+            == "secret\nname: app-secrets\ntype: Opaque\ndata-items: 2\nimmutable: yes\nage: 1h"
         )
 
 

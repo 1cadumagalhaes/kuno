@@ -18,11 +18,13 @@ from kuno.k8s.resources import (
     list_namespaces,
     list_pods,
     list_pvcs,
+    list_secrets,
     list_services,
     list_statefulsets,
     render_deployment_details,
     render_pod_details,
     render_pvc_details,
+    render_secret_details,
     render_service_details,
     render_statefulset_details,
     truncate_for_table,
@@ -32,6 +34,7 @@ from kuno.models import (
     ExplorerView,
     PodSummary,
     PvcSummary,
+    SecretSummary,
     ServiceSummary,
     StartupConfig,
     StatefulSetSummary,
@@ -77,6 +80,7 @@ class KunoApp(App[None]):
         self.deployments: list[DeploymentSummary] = []
         self.pods: list[PodSummary] = []
         self.pvcs: list[PvcSummary] = []
+        self.secrets: list[SecretSummary] = []
         self.services: list[ServiceSummary] = []
         self.statefulsets: list[StatefulSetSummary] = []
         self.resolved_startup_config: StartupConfig | None = None
@@ -139,18 +143,28 @@ class KunoApp(App[None]):
                     self.pods = await list_pods(kube_client, namespace)
                     self.deployments = []
                     self.pvcs = []
+                    self.secrets = []
                     self.services = []
                     self.statefulsets = []
                 elif self.current_view is ExplorerView.DEPLOYMENTS:
                     self.deployments = await list_deployments(kube_client, namespace)
                     self.pods = []
                     self.pvcs = []
+                    self.secrets = []
                     self.services = []
                     self.statefulsets = []
                 elif self.current_view is ExplorerView.PVC:
                     self.pvcs = await list_pvcs(kube_client, namespace)
                     self.pods = []
                     self.deployments = []
+                    self.secrets = []
+                    self.services = []
+                    self.statefulsets = []
+                elif self.current_view is ExplorerView.SECRETS:
+                    self.secrets = await list_secrets(kube_client, namespace)
+                    self.pods = []
+                    self.deployments = []
+                    self.pvcs = []
                     self.services = []
                     self.statefulsets = []
                 elif self.current_view is ExplorerView.SERVICES:
@@ -158,12 +172,14 @@ class KunoApp(App[None]):
                     self.pods = []
                     self.deployments = []
                     self.pvcs = []
+                    self.secrets = []
                     self.statefulsets = []
                 else:
                     self.statefulsets = await list_statefulsets(kube_client, namespace)
                     self.pods = []
                     self.deployments = []
                     self.pvcs = []
+                    self.secrets = []
                     self.services = []
                 with suppress(Exception):
                     self.available_namespaces = await list_namespaces(kube_client)
@@ -171,6 +187,7 @@ class KunoApp(App[None]):
             self.pods = []
             self.deployments = []
             self.pvcs = []
+            self.secrets = []
             self.services = []
             self.statefulsets = []
             await self._render_pod_table()
@@ -237,6 +254,16 @@ class KunoApp(App[None]):
                     pvc.storage_class,
                     pvc.age,
                     key=pvc.name,
+                )
+        elif self.current_view is ExplorerView.SECRETS:
+            for secret in self.secrets:
+                pod_table.add_row(
+                    truncate_for_table(secret.name),
+                    secret.type,
+                    str(secret.data_items),
+                    secret.immutable,
+                    secret.age,
+                    key=secret.name,
                 )
         else:
             for statefulset in self.statefulsets:
@@ -378,6 +405,11 @@ class KunoApp(App[None]):
             self._command_pvc,
         )
         yield SystemCommand(
+            "Secrets",
+            "Show secrets in the main table",
+            self._command_secrets,
+        )
+        yield SystemCommand(
             "Services",
             "Show services in the main table",
             self._command_services,
@@ -427,6 +459,8 @@ class KunoApp(App[None]):
                 self._command_pvc()
             case "refresh":
                 self._command_refresh()
+            case "secrets":
+                self._command_secrets()
             case "svc":
                 self._command_services()
             case "sts":
@@ -470,6 +504,12 @@ class KunoApp(App[None]):
     def _command_pvc(self) -> None:
         if self.current_view is not ExplorerView.PVC:
             self.current_view = ExplorerView.PVC
+            self.refresh_current_view()
+        self.query_one("#pod-table", DataTable).focus()
+
+    def _command_secrets(self) -> None:
+        if self.current_view is not ExplorerView.SECRETS:
+            self.current_view = ExplorerView.SECRETS
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
 
@@ -593,6 +633,8 @@ class KunoApp(App[None]):
             pod_details.update(render_deployment_details(self.deployments[index]))
         elif self.current_view is ExplorerView.PVC:
             pod_details.update(render_pvc_details(self.pvcs[index]))
+        elif self.current_view is ExplorerView.SECRETS:
+            pod_details.update(render_secret_details(self.secrets[index]))
         elif self.current_view is ExplorerView.SERVICES:
             pod_details.update(render_service_details(self.services[index]))
         else:
@@ -612,6 +654,8 @@ class KunoApp(App[None]):
             )
         elif self.current_view is ExplorerView.PVC:
             pod_table.add_columns("Status", "Volume", "Capacity", "Access", "StorageClass", "Age")
+        elif self.current_view is ExplorerView.SECRETS:
+            pod_table.add_columns("Type", "Data", "Immutable", "Age")
         elif self.current_view is ExplorerView.SERVICES:
             pod_table.add_columns("Type", "Cluster IP", "Ports", "Age", "Selector")
         else:
@@ -625,6 +669,7 @@ class KunoApp(App[None]):
         list[PodSummary]
         | list[DeploymentSummary]
         | list[PvcSummary]
+        | list[SecretSummary]
         | list[ServiceSummary]
         | list[StatefulSetSummary]
     ):
@@ -634,6 +679,8 @@ class KunoApp(App[None]):
             return self.deployments
         if self.current_view is ExplorerView.PVC:
             return self.pvcs
+        if self.current_view is ExplorerView.SECRETS:
+            return self.secrets
         if self.current_view is ExplorerView.SERVICES:
             return self.services
         return self.statefulsets
@@ -645,6 +692,8 @@ class KunoApp(App[None]):
             return "Deployments"
         if self.current_view is ExplorerView.PVC:
             return "PVC"
+        if self.current_view is ExplorerView.SECRETS:
+            return "Secrets"
         if self.current_view is ExplorerView.SERVICES:
             return "Services"
         return "StatefulSets"
@@ -656,6 +705,8 @@ class KunoApp(App[None]):
             return "Deployment Details"
         if self.current_view is ExplorerView.PVC:
             return "PVC Details"
+        if self.current_view is ExplorerView.SECRETS:
+            return "Secret Details"
         if self.current_view is ExplorerView.SERVICES:
             return "Service Details"
         return "StatefulSet Details"
@@ -667,6 +718,8 @@ class KunoApp(App[None]):
             return "deployment"
         if self.current_view is ExplorerView.PVC:
             return "pvc"
+        if self.current_view is ExplorerView.SECRETS:
+            return "secret"
         if self.current_view is ExplorerView.SERVICES:
             return "service"
         return "statefulset"
