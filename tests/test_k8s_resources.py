@@ -4,12 +4,16 @@ from types import SimpleNamespace
 import pytest
 
 from kuno.k8s.resources import (
+    container_summary,
     format_age,
+    format_cpu_requests,
+    format_memory_requests,
     list_pods,
     pod_ready,
     pod_restarts,
     pod_summary_from_api_item,
     render_pod_details,
+    truncate_for_table,
 )
 from kuno.models import PodSummary
 
@@ -28,6 +32,18 @@ def test_pod_summary_from_api_item_reads_operational_fields() -> None:
                 SimpleNamespace(ready=False, restart_count=2),
             ],
         ),
+        spec=SimpleNamespace(
+            containers=[
+                SimpleNamespace(
+                    name="api",
+                    resources=SimpleNamespace(requests={"cpu": "250m", "memory": "128Mi"}),
+                ),
+                SimpleNamespace(
+                    name="sidecar",
+                    resources=SimpleNamespace(requests={"cpu": "500m", "memory": "256Mi"}),
+                ),
+            ]
+        ),
     )
 
     assert pod_summary_from_api_item(
@@ -38,6 +54,9 @@ def test_pod_summary_from_api_item_reads_operational_fields() -> None:
         status="Running",
         restarts=3,
         age="822d",
+        containers="api,sidecar",
+        cpu="750m",
+        memory="384Mi",
     )
 
 
@@ -53,6 +72,32 @@ def test_pod_summary_from_api_item_defaults_phase() -> None:
         status="Unknown",
         restarts=0,
         age="-",
+        containers="-",
+        cpu="-",
+        memory="-",
+    )
+
+
+def test_container_summary_formats_names() -> None:
+    assert container_summary([SimpleNamespace(name="api")]) == "api"
+    assert (
+        container_summary([SimpleNamespace(name="api"), SimpleNamespace(name="sidecar")])
+        == "api,sidecar"
+    )
+
+
+def test_truncate_for_table_limits_long_values() -> None:
+    assert truncate_for_table("short", max_length=8) == "short"
+    assert truncate_for_table("very-long-name", max_length=8) == "very-..."
+    assert (
+        container_summary(
+            [
+                SimpleNamespace(name="api"),
+                SimpleNamespace(name="sidecar"),
+                SimpleNamespace(name="metrics"),
+            ]
+        )
+        == "api,+2"
     )
 
 
@@ -83,6 +128,24 @@ def test_format_age_formats_ranges() -> None:
     assert format_age(datetime(2026, 3, 30, 12, 0, tzinfo=UTC), now=now) == "3d"
 
 
+def test_format_cpu_requests_sums_container_requests() -> None:
+    containers = [
+        SimpleNamespace(resources=SimpleNamespace(requests={"cpu": "250m"})),
+        SimpleNamespace(resources=SimpleNamespace(requests={"cpu": "500m"})),
+    ]
+
+    assert format_cpu_requests(containers) == "750m"
+
+
+def test_format_memory_requests_sums_container_requests() -> None:
+    containers = [
+        SimpleNamespace(resources=SimpleNamespace(requests={"memory": "128Mi"})),
+        SimpleNamespace(resources=SimpleNamespace(requests={"memory": "256Mi"})),
+    ]
+
+    assert format_memory_requests(containers) == "384Mi"
+
+
 def test_render_pod_details_formats_pod() -> None:
     assert (
         render_pod_details(
@@ -92,9 +155,12 @@ def test_render_pod_details_formats_pod() -> None:
                 status="Running",
                 restarts=2,
                 age="5m",
+                containers="api,sidecar",
+                cpu="500m",
+                memory="256Mi",
             )
         )
-        == "pod\nname: api-1\nready: 1/1\nstatus: Running\nrestarts: 2\nage: 5m"
+        == "pod\nname: api-1\nready: 1/1\nstatus: Running\nrestarts: 2\nage: 5m\ncontainers: api,sidecar\ncpu: 500m\nmemory: 256Mi"
     )
 
 
@@ -127,6 +193,24 @@ async def test_list_pods_maps_api_items() -> None:
     kube_client = SimpleNamespace(core_v1=FakeCoreV1())
 
     assert await list_pods(kube_client, "payments") == [
-        PodSummary(name="api-1", ready="0/0", status="Running", restarts=0, age="-"),
-        PodSummary(name="worker-1", ready="0/0", status="Pending", restarts=0, age="-"),
+        PodSummary(
+            name="api-1",
+            ready="0/0",
+            status="Running",
+            restarts=0,
+            age="-",
+            containers="-",
+            cpu="-",
+            memory="-",
+        ),
+        PodSummary(
+            name="worker-1",
+            ready="0/0",
+            status="Pending",
+            restarts=0,
+            age="-",
+            containers="-",
+            cpu="-",
+            memory="-",
+        ),
     ]

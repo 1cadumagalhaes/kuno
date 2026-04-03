@@ -32,6 +32,9 @@ async def test_app_renders_startup_summary(monkeypatch) -> None:
                 status="Running",
                 restarts=2,
                 age="5m",
+                containers="api",
+                cpu="500m",
+                memory="256Mi",
             )
         ]
 
@@ -52,7 +55,7 @@ async def test_app_renders_startup_summary(monkeypatch) -> None:
         assert details_panel.display is False
         assert (
             pod_details.content
-            == "pod\nname: api-1\nready: 1/1\nstatus: Running\nrestarts: 2\nage: 5m"
+            == "pod\nname: api-1\nready: 1/1\nstatus: Running\nrestarts: 2\nage: 5m\ncontainers: api\ncpu: 500m\nmemory: 256Mi"
         )
 
 
@@ -125,8 +128,26 @@ async def test_app_updates_details_for_highlighted_pod(monkeypatch) -> None:
         assert kube_client.context == "prod"
         assert namespace == "payments"
         return [
-            PodSummary(name="api-1", ready="1/1", status="Running", restarts=1, age="5m"),
-            PodSummary(name="worker-1", ready="0/1", status="Pending", restarts=0, age="1m"),
+            PodSummary(
+                name="api-1",
+                ready="1/1",
+                status="Running",
+                restarts=1,
+                age="5m",
+                containers="api",
+                cpu="500m",
+                memory="256Mi",
+            ),
+            PodSummary(
+                name="worker-1",
+                ready="0/1",
+                status="Pending",
+                restarts=0,
+                age="1m",
+                containers="worker,sidecar",
+                cpu="250m",
+                memory="128Mi",
+            ),
         ]
 
     monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
@@ -148,7 +169,7 @@ async def test_app_updates_details_for_highlighted_pod(monkeypatch) -> None:
         await pilot.pause()
         assert (
             pod_details.content
-            == "pod\nname: worker-1\nready: 0/1\nstatus: Pending\nrestarts: 0\nage: 1m"
+            == "pod\nname: worker-1\nready: 0/1\nstatus: Pending\nrestarts: 0\nage: 1m\ncontainers: worker,sidecar\ncpu: 250m\nmemory: 128Mi"
         )
 
 
@@ -170,7 +191,18 @@ async def test_app_toggles_details_panel(monkeypatch) -> None:
     async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
         assert kube_client.context == "prod"
         assert namespace == "payments"
-        return [PodSummary(name="api-1", ready="1/1", status="Running", restarts=0, age="1m")]
+        return [
+            PodSummary(
+                name="api-1",
+                ready="1/1",
+                status="Running",
+                restarts=0,
+                age="1m",
+                containers="api",
+                cpu="100m",
+                memory="64Mi",
+            )
+        ]
 
     monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
     monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)

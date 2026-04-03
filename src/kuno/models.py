@@ -14,3 +14,6 @@ class PodSummary:
     status: str
     restarts: int
     age: str
+    containers: str
+    cpu: str
+    memory: str

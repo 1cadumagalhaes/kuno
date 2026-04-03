@@ -9,7 +9,7 @@ from textual.widgets import DataTable, Static
 
 from kuno.k8s.client import KubeClient
 from kuno.k8s.config import UnknownContextError, load_startup_targets
-from kuno.k8s.resources import list_pods, render_pod_details
+from kuno.k8s.resources import list_pods, render_pod_details, truncate_for_table
 from kuno.models import PodSummary, StartupConfig
 
 
@@ -42,7 +42,8 @@ class KunoApp(App[None]):
         details_panel.display = self.details_visible
         pod_table.cursor_type = "row"
         pod_table.zebra_stripes = True
-        pod_table.add_columns("Name", "Ready", "Status", "Restarts", "Age")
+        pod_table.add_column("Name", width=56)
+        pod_table.add_columns("Ready", "Status", "Restarts", "Age", "CPU", "Memory", "Containers")
         try:
             self.resolved_startup_config = load_startup_targets(self.startup_config)
         except UnknownContextError as error:
@@ -87,7 +88,15 @@ class KunoApp(App[None]):
         pod_table.clear()
         for pod in self.pods:
             pod_table.add_row(
-                pod.name, pod.ready, pod.status, str(pod.restarts), pod.age, key=pod.name
+                truncate_for_table(pod.name),
+                pod.ready,
+                pod.status,
+                str(pod.restarts),
+                pod.age,
+                pod.cpu,
+                pod.memory,
+                pod.containers,
+                key=pod.name,
             )
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
