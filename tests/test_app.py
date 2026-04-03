@@ -223,6 +223,44 @@ async def test_app_toggles_details_panel(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_app_restores_default_status_after_closing_command_bar(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
+        assert kube_client.context == "prod"
+        assert namespace == "payments"
+        return []
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        status = app.query_one("#command-status", Static)
+        app.action_toggle_details()
+        assert status.content == "Opened details panel"
+        app.action_open_command_bar()
+        await pilot.pause()
+        app.action_close_command_bar()
+        await pilot.pause()
+        assert status.content == "Press : for commands, Ctrl+P for palette"
+
+
+@pytest.mark.asyncio
 async def test_app_opens_command_bar(monkeypatch) -> None:
     def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
         return startup_config

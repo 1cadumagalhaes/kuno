@@ -17,6 +17,7 @@ from kuno.models import PodSummary, StartupConfig
 
 class KunoApp(App[None]):
     CSS_PATH = "app.tcss"
+    DEFAULT_COMMAND_STATUS = "Press : for commands, Ctrl+P for palette"
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("d", "toggle_details", "Details"),
         ("colon", "open_command_bar", "Command"),
@@ -41,7 +42,7 @@ class KunoApp(App[None]):
                 yield Static("Details", classes="panel-title")
                 yield Static("pod\n(loading)", id="pod-details")
         yield Input(placeholder=": command", id="command-input")
-        yield Static("Press : for commands, Ctrl+P for palette", id="command-status")
+        yield Static(self.DEFAULT_COMMAND_STATUS, id="command-status")
 
     def on_mount(self) -> None:
         command_input = self.query_one("#command-input", Input)
@@ -133,6 +134,7 @@ class KunoApp(App[None]):
         command_input.display = True
         command_input.value = ":"
         command_input.focus()
+        self._set_command_status(self.DEFAULT_COMMAND_STATUS)
 
     def action_close_command_bar(self) -> None:
         if not self.command_bar_visible:
@@ -142,6 +144,7 @@ class KunoApp(App[None]):
         command_input.display = False
         command_input.value = ""
         self.query_one("#pod-table", DataTable).focus()
+        self._set_command_status(self.DEFAULT_COMMAND_STATUS)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id != "command-input":
