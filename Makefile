@@ -1,5 +1,15 @@
 
-.PHONY: format format-check lint lint-check lint-unsafe typecheck test pre-commit check
+.PHONY: format format-check lint lint-check lint-unsafe typecheck test run pre-commit check
+
+ARGS :=
+
+ifdef CTX
+ARGS += --context $(CTX)
+endif
+
+ifdef NS
+ARGS += --namespace $(NS)
+endif
 
 format:
 	uv run ruff format .
@@ -21,6 +31,9 @@ typecheck:
 
 test:
 	uv run pytest
+
+run:
+	uv run python -m kuno $(ARGS)
 
 pre-commit:
 	uv run ruff format .
