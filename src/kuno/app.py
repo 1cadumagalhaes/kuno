@@ -5,13 +5,11 @@ from contextlib import suppress
 from textwrap import wrap as text_wrap
 from typing import ClassVar
 
-from rich.style import Style
-from rich.text import Text
 from textual import events, work
 from textual.app import App, ComposeResult, SystemCommand
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Button, DataTable, Footer, Input, RichLog, Static
+from textual.widgets import Button, DataTable, Footer, Input, Log, Static
 
 from kuno.commands import ParsedCommand, parse_command, suggest_commands
 from kuno.k8s.actions import delete_resource, restart_resource
@@ -46,7 +44,7 @@ from kuno.k8s.resources import (
     stream_pod_logs,
     truncate_for_table,
 )
-from kuno.logs import LogMode, format_log_line, parse_log_line, render_log_line
+from kuno.logs import LogMode, StructuredLogHighlighter, format_log_line, parse_log_line
 from kuno.models import (
     ContainerSummary,
     ContextSummary,
@@ -151,20 +149,22 @@ class LogsScreen(Screen[None]):
             yield Input(placeholder="since (e.g. 5m, 1h)", id="logs-since")
             yield Input(placeholder="filter logs", id="logs-filter")
         with Horizontal(id="logs-body"):
-            yield RichLog(id="logs-output", wrap=False, highlight=False)
+            yield Log(id="logs-output", highlight=False)
             with Vertical(id="logs-detail-panel"):
                 yield Static("Log Detail", id="logs-detail-title", classes="panel-title")
                 yield Static("(no log selected)", id="logs-detail-content")
         yield Footer()
 
     def on_mount(self) -> None:
-        self.query_one("#logs-output", RichLog).focus()
+        output = self.query_one("#logs-output", Log)
+        output.focus()
+        output.highlighter = StructuredLogHighlighter()
         self.query_one("#logs-detail-panel", Vertical).display = False
         self.load_logs()
 
     @work(exclusive=True)
     async def load_logs(self) -> None:
-        output = self.query_one("#logs-output", RichLog)
+        output = self.query_one("#logs-output", Log)
         output.clear()
         try:
             async with KubeClient(context=self.context) as kube_client:
@@ -201,7 +201,7 @@ class LogsScreen(Screen[None]):
                 self._start_streaming()
 
     def on_click(self, event: events.Click) -> None:
-        output = self.query_one("#logs-output", RichLog)
+        output = self.query_one("#logs-output", Log)
         offset = event.get_content_offset(output)
         if offset is None:
             return
@@ -245,8 +245,7 @@ class LogsScreen(Screen[None]):
 
     def action_cycle_mode(self) -> None:
         self.mode = {
-            LogMode.RAW: LogMode.PRETTY,
-            LogMode.PRETTY: LogMode.STRUCTURED,
+            LogMode.RAW: LogMode.STRUCTURED,
             LogMode.STRUCTURED: LogMode.RAW,
         }[self.mode]
         self._update_title()
@@ -309,10 +308,9 @@ class LogsScreen(Screen[None]):
             self._update_detail_panel()
 
     def _render_logs(self) -> None:
-        output = self.query_one("#logs-output", RichLog)
+        output = self.query_one("#logs-output", Log)
         output.clear()
         output.auto_scroll = self.follow_enabled
-        output.wrap = self.wrap_enabled
         lines = self._display_entries()
         if lines:
             for line in lines:
@@ -326,7 +324,7 @@ class LogsScreen(Screen[None]):
         self._update_detail_panel()
 
     async def stream_logs(self) -> None:
-        output = self.query_one("#logs-output", RichLog)
+        output = self.query_one("#logs-output", Log)
         try:
             async with KubeClient(context=self.context) as kube_client:
                 async for line in stream_pod_logs(
@@ -347,7 +345,7 @@ class LogsScreen(Screen[None]):
                             output.write(wrapped_line)
                     else:
                         for item in rendered:
-                            output.write(item)
+                            output.write(str(item))
                     output.scroll_end(animate=False, immediate=True, x_axis=False)
         except Exception as error:
             output.write(f"error: {error}")
@@ -363,8 +361,8 @@ class LogsScreen(Screen[None]):
             self.stream_worker.cancel()
             self.stream_worker = None
 
-    def _wrap_lines(self, lines: list[object]) -> list[str]:
-        output = self.query_one("#logs-output", RichLog)
+    def _wrap_lines(self, lines: list[str]) -> list[str]:
+        output = self.query_one("#logs-output", Log)
         width = max(output.size.width - 2, 20)
         wrapped: list[str] = []
         for line in lines:
@@ -400,8 +398,8 @@ class LogsScreen(Screen[None]):
         self._stop_streaming()
         self.app.pop_screen()
 
-    def _display_entries(self) -> list[object]:
-        lines: list[object] = []
+    def _display_entries(self) -> list[str]:
+        lines: list[str] = []
         self.rendered_log_spans = []
         current_line = 0
         for index in self._visible_log_indices():
@@ -420,7 +418,7 @@ class LogsScreen(Screen[None]):
     def _display_lines_plain(self) -> list[str]:
         lines: list[str] = []
         for raw_line in self.log_lines:
-            lines.extend([str(line) for line in render_log_line(raw_line, self.mode)])
+            lines.extend(format_log_line(raw_line, self.mode))
         return lines
 
     def _update_detail_panel(self) -> None:
@@ -438,46 +436,28 @@ class LogsScreen(Screen[None]):
         parsed = parse_log_line(raw_line)
         title.update(f"Log Detail ({index + 1}/{len(visible)})")
         timestamp = f"timestamp: {parsed.timestamp}\n\n" if parsed.timestamp else ""
-        body = (
-            "\n".join(format_log_line(raw_line, LogMode.PRETTY))
-            if parsed.data is not None
-            else parsed.raw
-        )
+        body = format_log_line(raw_line, LogMode.STRUCTURED)[0]
         detail.update(f"{timestamp}{body}")
 
     def _visible_log_indices(self) -> list[int]:
         visible: list[int] = []
         for index, raw_line in enumerate(self.log_lines):
-            rendered = render_log_line(raw_line, self.mode)
-            if self.filter_text and not any(self.filter_text in str(line) for line in rendered):
+            rendered = format_log_line(raw_line, self.mode)
+            if self.filter_text and not any(self.filter_text in line for line in rendered):
                 continue
             visible.append(index)
         if visible and self.selected_log_index not in visible:
             self.selected_log_index = visible[0]
         return visible
 
-    def _entry_renderables(self, raw_line: str, *, selected: bool) -> list[object]:
-        rendered: list[object] = []
-        rendered.extend(render_log_line(raw_line, self.mode))
+    def _entry_renderables(self, raw_line: str, *, selected: bool) -> list[str]:
+        rendered: list[str] = []
+        rendered.extend(format_log_line(raw_line, self.mode))
+        if self.wrap_enabled:
+            rendered = self._wrap_lines(list(rendered))
         if not selected or self.follow_enabled:
             return rendered
-        highlighted: list[object] = []
-        for line in rendered:
-            if isinstance(line, Text):
-                text = line.copy()
-                text = Text.assemble(
-                    ("> ", Style(color="black", bgcolor="bright_white", bold=True)), text
-                )
-                text.stylize(Style(bgcolor="grey35"))
-                highlighted.append(text)
-            else:
-                highlighted.append(
-                    Text.assemble(
-                        ("> ", Style(color="black", bgcolor="bright_white", bold=True)),
-                        (str(line), Style(bgcolor="grey35")),
-                    )
-                )
-        return highlighted
+        return [f"> {line}" for line in rendered]
 
 
 class KunoApp(App[None]):

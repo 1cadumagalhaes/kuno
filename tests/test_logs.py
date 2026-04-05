@@ -1,4 +1,4 @@
-from kuno.logs import LogMode, format_log_line, parse_log_line
+from kuno.logs import LogMode, StructuredLogHighlighter, format_log_line, parse_log_line
 
 
 def test_parse_log_line_reads_common_json_fields() -> None:
@@ -13,12 +13,6 @@ def test_parse_log_line_reads_common_json_fields() -> None:
     assert parsed.fields == {"user_id": 123}
 
 
-def test_format_log_line_pretty_formats_json() -> None:
-    lines = format_log_line('{"b":2,"a":1}', LogMode.PRETTY)
-
-    assert lines == ["{", '  "a": 1,', '  "b": 2', "}"]
-
-
 def test_format_log_line_structured_formats_json() -> None:
     lines = format_log_line(
         '{"timestamp":"2026-04-03T12:00:00Z","level":"warn","message":"boom","component":"worker","user_id":123}',
@@ -30,3 +24,11 @@ def test_format_log_line_structured_formats_json() -> None:
 
 def test_format_log_line_structured_keeps_plain_text() -> None:
     assert format_log_line("plain line", LogMode.STRUCTURED) == ["plain line"]
+
+
+def test_structured_log_highlighter_keeps_text_shape() -> None:
+    from rich.text import Text
+
+    text = Text("2026-04-03T12:00:00Z INFO api ready user_id=123")
+    StructuredLogHighlighter().highlight(text)
+    assert text.plain == "2026-04-03T12:00:00Z INFO api ready user_id=123"

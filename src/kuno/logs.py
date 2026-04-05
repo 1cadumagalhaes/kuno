@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from rich.style import Style
+from rich.highlighter import Highlighter
 from rich.text import Text
 
 
 class LogMode(StrEnum):
     RAW = "raw"
-    PRETTY = "pretty"
     STRUCTURED = "structured"
 
 
@@ -90,24 +90,7 @@ def format_log_line(line: str, mode: LogMode) -> list[str]:
     parsed = parse_log_line(line)
     if mode is LogMode.RAW:
         return [parsed.raw]
-    if mode is LogMode.PRETTY:
-        if parsed.data is None:
-            return [parsed.raw]
-        return json.dumps(parsed.data, indent=2, sort_keys=True).splitlines()
     return [_structured_line(parsed)]
-
-
-def render_log_line(line: str, mode: LogMode) -> list[Text | str]:
-    parsed = parse_log_line(line)
-    if mode is LogMode.RAW:
-        return [parsed.raw]
-    if mode is LogMode.PRETTY:
-        if parsed.data is None:
-            return [parsed.raw]
-        lines: list[Text | str] = []
-        lines.extend(json.dumps(parsed.data, indent=2, sort_keys=True).splitlines())
-        return lines
-    return [_structured_text(parsed)]
 
 
 def _structured_line(parsed: ParsedLogLine) -> str:
@@ -128,33 +111,24 @@ def _structured_line(parsed: ParsedLogLine) -> str:
     return " ".join(part for part in parts if part)
 
 
-def _structured_text(parsed: ParsedLogLine) -> Text | str:
-    if parsed.data is None:
-        return parsed.raw
+class StructuredLogHighlighter(Highlighter):
+    TIMESTAMP_RE = re.compile(r"^\S+Z?\s")
+    LEVEL_RE = re.compile(r"\b(INFO|WARN|WARNING|ERROR|DEBUG|CRITICAL|FATAL)\b")
+    KEY_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_.-]*)=")
 
-    text = Text()
-    if parsed.timestamp:
-        text.append(parsed.timestamp, style=Style(dim=True))
-        text.append(" ")
-    if parsed.level:
-        text.append(parsed.level.upper(), style=_level_style(parsed.level))
-        text.append(" ")
-    if parsed.category:
-        text.append(parsed.category, style="cyan")
-        text.append(" ")
-    if parsed.message:
-        text.append(parsed.message)
-    for key, value in parsed.fields.items():
-        if text.plain:
-            text.append(" ")
-        text.append(f"{key}=", style="magenta")
-        text.append(_stringify(value), style="yellow")
-    return text
+    def highlight(self, text: Text) -> None:
+        if match := self.TIMESTAMP_RE.match(text.plain):
+            text.stylize("dim", 0, match.end())
+        for match in self.LEVEL_RE.finditer(text.plain):
+            level = match.group(1)
+            text.stylize(_level_style_name(level), match.start(), match.end())
+        for match in self.KEY_RE.finditer(text.plain):
+            text.stylize("magenta", match.start(1), match.end(1))
 
 
-def _level_style(level: str) -> str:
+def _level_style_name(level: str) -> str:
     value = level.lower()
-    if value in {"error", "err", "fatal", "critical"}:
+    if value in {"error", "fatal", "critical"}:
         return "bold red"
     if value in {"warn", "warning"}:
         return "bold yellow"

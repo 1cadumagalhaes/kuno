@@ -1,6 +1,6 @@
 import pytest
 from textual.containers import Vertical
-from textual.widgets import Button, DataTable, Input, RichLog, Static
+from textual.widgets import Button, DataTable, Input, Log, Static
 
 from kuno.app import AboutScreen, KunoApp, LogsScreen
 from kuno.k8s.config import UnknownContextError
@@ -716,7 +716,7 @@ async def test_logs_screen_filters_lines(monkeypatch) -> None:
         await pilot.pause()
         assert isinstance(app.screen, LogsScreen)
         log_filter = app.screen.query_one("#logs-filter", Input)
-        output = app.screen.query_one("#logs-output", RichLog)
+        output = app.screen.query_one("#logs-output", Log)
         log_filter.value = "error"
         await pilot.pause()
         assert len(output.lines) == 1
@@ -987,10 +987,10 @@ async def test_logs_screen_cycles_modes(monkeypatch) -> None:
         assert "mode: raw [m]" in str(title.content)
         screen.action_cycle_mode()
         await pilot.pause()
-        assert "mode: pretty [m]" in str(title.content)
+        assert "mode: structured [m]" in str(title.content)
         screen.action_cycle_mode()
         await pilot.pause()
-        assert "mode: structured [m]" in str(title.content)
+        assert "mode: raw [m]" in str(title.content)
 
 
 @pytest.mark.asyncio
@@ -1129,8 +1129,7 @@ async def test_logs_screen_toggles_line_detail_panel(monkeypatch) -> None:
         await pilot.pause()
         assert detail_panel.display is True
         assert str(detail_title.content) == "Log Detail (1/1)"
-        assert "{" in str(detail_content.content)
-        assert '"level": "info"' in str(detail_content.content)
+        assert "INFO ready" in str(detail_content.content)
 
 
 @pytest.mark.asyncio
@@ -1192,7 +1191,7 @@ async def test_logs_screen_supports_mouse_selection(monkeypatch) -> None:
         app.execute_command("logs")
         await pilot.pause()
         assert isinstance(app.screen, LogsScreen)
-        output = app.screen.query_one("#logs-output", RichLog)
+        output = app.screen.query_one("#logs-output", Log)
         await pilot.click(output, offset=(2, 1))
         await pilot.pause()
         assert app.screen.selected_log_index == 0
