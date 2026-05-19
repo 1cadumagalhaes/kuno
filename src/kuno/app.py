@@ -1180,6 +1180,89 @@ class EventsScreen(Screen[None]):
         self.app.pop_screen()
 
 
+class ConfigScreen(Screen[None]):
+    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
+        ("escape", "close", "Back"),
+        ("s", "save", "Save"),
+    ]
+
+    def __init__(self, *, kuno_config: KunoConfig, app_themes: list[str]) -> None:
+        super().__init__()
+        self._config = kuno_config
+        self._app_themes = app_themes
+
+    def compose(self) -> ComposeResult:
+        yield Static("Config", id="config-title")
+        with VerticalScroll(id="config-panel"):
+            with Vertical(id="config-section-ui", classes="config-section"):
+                yield Static("UI", classes="panel-title")
+                with Horizontal(classes="config-row"):
+                    yield Static("Theme", classes="config-label")
+                    yield Select(
+                        [(t, t) for t in self._app_themes],
+                        value=self._config.theme,
+                        id="config-theme",
+                    )
+                with Horizontal(classes="config-row"):
+                    yield Static("YAML theme", classes="config-label")
+                    yield Select(
+                        [(t, t) for t in self._app_themes],
+                        value=self._config.yaml_theme,
+                        id="config-yaml-theme",
+                    )
+            with Vertical(id="config-section-logs", classes="config-section"):
+                yield Static("Logs", classes="panel-title")
+                with Horizontal(classes="config-row"):
+                    yield Static("Default mode", classes="config-label")
+                    yield Select(
+                        [("raw", "raw"), ("structured", "structured")],
+                        value=self._config.log_mode,
+                        id="config-log-mode",
+                    )
+                with Horizontal(classes="config-row"):
+                    yield Static("Tail lines", classes="config-label")
+                    yield Input(
+                        value=str(self._config.tail_lines),
+                        id="config-tail-lines",
+                        type="integer",
+                    )
+                with Horizontal(classes="config-row"):
+                    yield Static("Wrap lines", classes="config-label")
+                    yield Switch(value=self._config.wrap_logs, id="config-wrap")
+                with Horizontal(classes="config-row"):
+                    yield Static("Show timestamps", classes="config-label")
+                    yield Switch(value=self._config.timestamps_enabled, id="config-timestamps")
+        yield Footer()
+
+    def action_save(self) -> None:
+        theme_select = self.query_one("#config-theme", Select)
+        yaml_theme_select = self.query_one("#config-yaml-theme", Select)
+        log_mode_select = self.query_one("#config-log-mode", Select)
+        tail_input = self.query_one("#config-tail-lines", Input)
+        wrap_switch = self.query_one("#config-wrap", Switch)
+        ts_switch = self.query_one("#config-timestamps", Switch)
+
+        if theme_select.value is not Select.BLANK:
+            self._config.theme = str(theme_select.value)
+        if yaml_theme_select.value is not Select.BLANK:
+            self._config.yaml_theme = str(yaml_theme_select.value)
+        if log_mode_select.value is not Select.BLANK:
+            self._config.log_mode = str(log_mode_select.value)
+        try:
+            self._config.tail_lines = int(tail_input.value)
+        except ValueError:
+            pass
+        self._config.wrap_logs = wrap_switch.value
+        self._config.timestamps_enabled = ts_switch.value
+
+        save_config(self._config)
+        self.notify("Config saved")
+        self.app.pop_screen()
+
+    def action_close(self) -> None:
+        self.app.pop_screen()
+
+
 class KunoApp(App[None]):
     CSS_PATH = "app.tcss"
     MAX_COMMAND_SUGGESTIONS = 4
