@@ -1,6 +1,6 @@
 import pytest
 from textual.containers import Vertical
-from textual.widgets import Button, DataTable, Input, Log, Static
+from textual.widgets import Button, DataTable, Input, RichLog, Static
 
 from kuno.app import AboutScreen, KunoApp, LogsScreen
 from kuno.k8s.config import UnknownContextError
@@ -726,7 +726,7 @@ async def test_logs_screen_filters_lines(monkeypatch) -> None:
         await pilot.pause()
         assert isinstance(app.screen, LogsScreen)
         log_filter = app.screen.query_one("#logs-filter", Input)
-        output = app.screen.query_one("#logs-output", Log)
+        output = app.screen.query_one("#logs-output", RichLog)
         log_filter.value = "error"
         await pilot.pause()
         assert len(output.lines) == 1
@@ -853,12 +853,12 @@ async def test_logs_navigation_turns_off_follow(monkeypatch) -> None:
         app.execute_command("logs")
         await pilot.pause()
         assert isinstance(app.screen, LogsScreen)
-        app.screen.action_toggle_follow()
-        await pilot.pause()
         assert app.screen.follow_enabled is True
-        await pilot.press("up")
+        await pilot.press("k")
         await pilot.pause()
         assert app.screen.follow_enabled is False
+        await pilot.press("k")
+        await pilot.pause()
         assert app.screen.selected_log_index == 1
 
 
@@ -1201,10 +1201,10 @@ async def test_logs_screen_supports_mouse_selection(monkeypatch) -> None:
         app.execute_command("logs")
         await pilot.pause()
         assert isinstance(app.screen, LogsScreen)
-        output = app.screen.query_one("#logs-output", Log)
-        await pilot.click(output, offset=(2, 1))
+        output = app.screen.query_one("#logs-output", RichLog)
+        await pilot.click(output, offset=(2, 0))
         await pilot.pause()
-        assert app.screen.selected_log_index == 0
+        assert app.screen.selected_log_index == 2
 
 
 @pytest.mark.asyncio
