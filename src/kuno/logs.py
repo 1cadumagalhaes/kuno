@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any
 
@@ -93,6 +94,17 @@ def format_log_line(line: str, mode: LogMode) -> list[str]:
     return [_structured_line(parsed)]
 
 
+def rich_log_line(line: str, mode: LogMode, *, selected: bool = False) -> Text:
+    parsed = parse_log_line(line)
+    if mode is LogMode.RAW or parsed.data is None:
+        text = Text(parsed.raw)
+    else:
+        text = _structured_text(parsed)
+    if selected:
+        text.stylize("reverse")
+    return text
+
+
 def _structured_line(parsed: ParsedLogLine) -> str:
     if parsed.data is None:
         return parsed.raw
@@ -109,6 +121,40 @@ def _structured_line(parsed: ParsedLogLine) -> str:
     field_parts = [f"{key}={_stringify(value)}" for key, value in parsed.fields.items()]
     parts.extend(field_parts)
     return " ".join(part for part in parts if part)
+
+
+def _structured_text(parsed: ParsedLogLine) -> Text:
+    text = Text()
+    if parsed.timestamp:
+        text.append(_short_timestamp(parsed.timestamp), style="dim")
+        text.append(" ")
+    if parsed.level:
+        level_str = parsed.level.upper()
+        text.append(level_str, style=_level_style_name(level_str))
+        text.append(" ")
+    if parsed.category:
+        text.append(parsed.category, style="dim cyan")
+        text.append(" ")
+    if parsed.message:
+        text.append(parsed.message)
+    for key, value in parsed.fields.items():
+        text.append(" ")
+        text.append(key, style="magenta")
+        text.append("=")
+        text.append(_stringify(value))
+    return text
+
+
+def _short_timestamp(ts: str) -> str:
+    for fmt in ("%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            dt = datetime.strptime(ts, fmt)
+            if dt.tzinfo is not None:
+                dt = dt.astimezone(timezone.utc)
+            return dt.strftime("%m-%d %H:%M:%S")
+        except ValueError:
+            continue
+    return ts[:19] if len(ts) > 19 else ts
 
 
 class StructuredLogHighlighter(Highlighter):
