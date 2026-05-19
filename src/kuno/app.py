@@ -688,6 +688,19 @@ class ManifestScreen(Screen[None]):
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("escape", "close", "Back"),
         ("y", "copy_manifest", "Copy"),
+        ("/", "toggle_search", "Search"),
+        ("n", "next_match", "Next match"),
+        ("N", "prev_match", "Prev match"),
+        ("]", "next_key", "Next key"),
+        ("[", "prev_key", "Prev key"),
+        ("j", "scroll_down", ""),
+        ("k", "scroll_up", ""),
+        ("h", "scroll_left", ""),
+        ("l", "scroll_right", ""),
+        ("g", "scroll_top", "Top"),
+        ("G", "scroll_bottom", "Bottom"),
+        ("down", "scroll_down", ""),
+        ("up", "scroll_up", ""),
     ]
 
     def __init__(
@@ -697,17 +710,168 @@ class ManifestScreen(Screen[None]):
         self.yaml_content = yaml_content
         self.resource_name = resource_name
         self.yaml_theme = yaml_theme
+        self._lines: list[str] = yaml_content.splitlines()
+        self._match_indices: list[int] = []
+        self._match_cursor: int = 0
+        self._key_lines: list[int] = [
+            i for i, ln in enumerate(self._lines)
+            if ln.lstrip().lstrip("- ").split(":")[0].strip()
+            and ":" in ln
+            and not ln.lstrip().startswith("#")
+            and re.match(r"^\s*-?\s*[\w\"'][^:]*:", ln) is not None
+        ]
+        self._key_cursor: int = 0
+        self._search_open: bool = False
 
     def compose(self) -> ComposeResult:
         yield Static(f"YAML — {self.resource_name}", id="manifest-title")
-        with VerticalScroll(id="manifest-scroll"):
-            yield RichLog(id="manifest-output", highlight=True, markup=True)
+        with Horizontal(id="manifest-controls"):
+            yield Input(placeholder="search  (escape to close)", id="manifest-search")
+            yield Static("", id="manifest-match-status")
+        with VerticalScroll(id="manifest-panel"):
+            yield Static(id="manifest-output")
         yield Footer()
 
     def on_mount(self) -> None:
-        output = self.query_one("#manifest-output", RichLog)
-        code = Syntax(self.yaml_content, "yaml", theme=self.yaml_theme, line_numbers=False)
-        output.write(code)
+        self._render_yaml()
+        self.query_one("#manifest-controls").display = False
+        self.query_one("#manifest-panel").focus()
+
+    def on_theme_changed(self) -> None:
+        self._render_yaml()
+
+    def _syntax_theme(self) -> str:
+        t = self.app.get_theme(self.app.theme)
+        return "ansi_dark" if (t is None or t.dark) else "ansi_light"
+
+    def _render_yaml(self, highlight_line: int | None = None) -> None:
+        output = self.query_one("#manifest-output", Static)
+        syntax = Syntax(
+            self.yaml_content,
+            "yaml",
+            theme=self._syntax_theme(),
+            line_numbers=True,
+            highlight_lines={highlight_line + 1} if highlight_line is not None else set(),
+        )
+        output.update(syntax)
+
+    def _update_match_status(self) -> None:
+        status = self.query_one("#manifest-match-status", Static)
+        if not self._match_indices:
+            status.update("")
+        else:
+            status.update(f"{self._match_cursor + 1}/{len(self._match_indices)}")
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "manifest-search":
+            return
+        term = event.value.strip().lower()
+        if not term:
+            self._match_indices = []
+            self._match_cursor = 0
+            self._render_yaml()
+            self._update_match_status()
+            return
+        self._match_indices = [i for i, ln in enumerate(self._lines) if term in ln.lower()]
+        self._match_cursor = 0
+        hl = self._match_indices[0] if self._match_indices else None
+        self._render_yaml(highlight_line=hl)
+        self._update_match_status()
+        if hl is not None:
+            self._scroll_to_line(hl)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "manifest-search":
+            self.query_one("#manifest-panel").focus()
+
+    def on_key(self, event: events.Key) -> None:
+        search = self.query_one("#manifest-search", Input)
+        if search.has_focus and event.key == "escape":
+            event.stop()
+            self._close_search()
+
+    def _close_search(self) -> None:
+        self._search_open = False
+        self.query_one("#manifest-controls").display = False
+        self.query_one("#manifest-panel").focus()
+
+    def _scroll_to_line(self, line_index: int) -> None:
+        scroll = self.query_one("#manifest-panel", VerticalScroll)
+        output = self.query_one("#manifest-output", Static)
+        total_lines = len(self._lines)
+        if total_lines == 0:
+            return
+        ratio = line_index / total_lines
+        scroll.scroll_to(y=ratio * output.virtual_size.height, animate=False)
+
+    def _panel_focused(self) -> bool:
+        return self.query_one("#manifest-panel").has_focus
+
+    def action_toggle_search(self) -> None:
+        if self._search_open:
+            self._close_search()
+        else:
+            self._search_open = True
+            self.query_one("#manifest-controls").display = True
+            self.query_one("#manifest-search", Input).focus()
+
+    def action_next_match(self) -> None:
+        if not self._match_indices:
+            return
+        self._match_cursor = (self._match_cursor + 1) % len(self._match_indices)
+        hl = self._match_indices[self._match_cursor]
+        self._render_yaml(highlight_line=hl)
+        self._update_match_status()
+        self._scroll_to_line(hl)
+
+    def action_prev_match(self) -> None:
+        if not self._match_indices:
+            return
+        self._match_cursor = (self._match_cursor - 1) % len(self._match_indices)
+        hl = self._match_indices[self._match_cursor]
+        self._render_yaml(highlight_line=hl)
+        self._update_match_status()
+        self._scroll_to_line(hl)
+
+    def action_next_key(self) -> None:
+        if not self._key_lines:
+            return
+        self._key_cursor = (self._key_cursor + 1) % len(self._key_lines)
+        line = self._key_lines[self._key_cursor]
+        self._render_yaml(highlight_line=line)
+        self._scroll_to_line(line)
+
+    def action_prev_key(self) -> None:
+        if not self._key_lines:
+            return
+        self._key_cursor = (self._key_cursor - 1) % len(self._key_lines)
+        line = self._key_lines[self._key_cursor]
+        self._render_yaml(highlight_line=line)
+        self._scroll_to_line(line)
+
+    def action_scroll_down(self) -> None:
+        if self._panel_focused():
+            self.query_one("#manifest-panel", VerticalScroll).scroll_down(animate=False)
+
+    def action_scroll_up(self) -> None:
+        if self._panel_focused():
+            self.query_one("#manifest-panel", VerticalScroll).scroll_up(animate=False)
+
+    def action_scroll_left(self) -> None:
+        if self._panel_focused():
+            self.query_one("#manifest-panel", VerticalScroll).scroll_left(animate=False)
+
+    def action_scroll_right(self) -> None:
+        if self._panel_focused():
+            self.query_one("#manifest-panel", VerticalScroll).scroll_right(animate=False)
+
+    def action_scroll_top(self) -> None:
+        if self._panel_focused():
+            self.query_one("#manifest-panel", VerticalScroll).scroll_home(animate=False)
+
+    def action_scroll_bottom(self) -> None:
+        if self._panel_focused():
+            self.query_one("#manifest-panel", VerticalScroll).scroll_end(animate=False)
 
     def action_copy_manifest(self) -> None:
         self.app.copy_to_clipboard(self.yaml_content)
@@ -721,6 +885,15 @@ class DescribeScreen(Screen[None]):
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("escape", "close", "Back"),
         ("y", "copy_describe", "Copy"),
+        ("/", "toggle_search", "Search"),
+        ("n", "next_match", "Next match"),
+        ("N", "prev_match", "Prev match"),
+        ("j", "scroll_down", ""),
+        ("k", "scroll_up", ""),
+        ("g", "scroll_top", "Top"),
+        ("G", "scroll_bottom", "Bottom"),
+        ("down", "scroll_down", ""),
+        ("up", "scroll_up", ""),
     ]
 
     def __init__(
@@ -730,28 +903,143 @@ class DescribeScreen(Screen[None]):
         self.describe_text = describe_text
         self.resource_name = resource_name
         self.events = events or []
+        self._lines: list[str] = describe_text.splitlines()
+        self._match_indices: list[int] = []
+        self._match_cursor: int = 0
+        self._search_open: bool = False
 
     def compose(self) -> ComposeResult:
         yield Static(f"Describe — {self.resource_name}", id="describe-title")
-        with VerticalScroll(id="describe-scroll"):
-            yield Static("", id="describe-content")
+        with Horizontal(id="describe-controls"):
+            yield Input(placeholder="search  (escape to close)", id="describe-search")
+            yield Static("", id="describe-match-status")
+        with Horizontal(id="describe-body"):
+            with VerticalScroll(id="describe-panel"):
+                yield Static("", id="describe-content")
             if self.events:
-                yield Static("", id="describe-events-title")
-                yield Static("", id="describe-events")
+                with Vertical(id="describe-events-panel"):
+                    yield Static("Events", id="describe-events-title", classes="panel-title")
+                    yield Static("", id="describe-events")
         yield Footer()
 
     def on_mount(self) -> None:
-        content = self.query_one("#describe-content", Static)
-        content.update(self.describe_text)
+        self._render_content()
         if self.events:
-            events_title = self.query_one("#describe-events-title", Static)
-            events_content = self.query_one("#describe-events", Static)
-            events_title.update("\nEvents:")
-            lines: list[str] = [
+            lines = [
                 f"  {ev.age:>10}  {ev.type:>7}  {ev.reason:<20}  {ev.count:>3}  {ev.message}"
                 for ev in self.events
             ]
-            events_content.update("\n".join(lines) if lines else "  (none)")
+            self.query_one("#describe-events", Static).update(
+                "\n".join(lines) if lines else "  (none)"
+            )
+        self.query_one("#describe-controls").display = False
+        self.query_one("#describe-panel").focus()
+
+    def _render_content(self, highlight_line: int | None = None) -> None:
+        if highlight_line is None:
+            self.query_one("#describe-content", Static).update(self.describe_text)
+            return
+        text = Text()
+        for i, ln in enumerate(self._lines):
+            if i == highlight_line:
+                text.append(ln + "\n", style="bold reverse")
+            else:
+                text.append(ln + "\n")
+        self.query_one("#describe-content", Static).update(text)
+
+    def _update_match_status(self) -> None:
+        status = self.query_one("#describe-match-status", Static)
+        if not self._match_indices:
+            status.update("")
+        else:
+            status.update(f"{self._match_cursor + 1}/{len(self._match_indices)}")
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "describe-search":
+            return
+        term = event.value.strip().lower()
+        if not term:
+            self._match_indices = []
+            self._match_cursor = 0
+            self._render_content()
+            self._update_match_status()
+            return
+        self._match_indices = [i for i, ln in enumerate(self._lines) if term in ln.lower()]
+        self._match_cursor = 0
+        hl = self._match_indices[0] if self._match_indices else None
+        self._render_content(highlight_line=hl)
+        self._update_match_status()
+        if hl is not None:
+            self._scroll_to_line(hl)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "describe-search":
+            self.query_one("#describe-panel").focus()
+
+    def on_key(self, event: events.Key) -> None:
+        search = self.query_one("#describe-search", Input)
+        if search.has_focus and event.key == "escape":
+            event.stop()
+            self._close_search()
+
+    def _close_search(self) -> None:
+        self._search_open = False
+        self.query_one("#describe-controls").display = False
+        self.query_one("#describe-panel").focus()
+
+    def _scroll_to_line(self, line_index: int) -> None:
+        scroll = self.query_one("#describe-panel", VerticalScroll)
+        output = self.query_one("#describe-content", Static)
+        total_lines = len(self._lines)
+        if total_lines == 0:
+            return
+        ratio = line_index / total_lines
+        scroll.scroll_to(y=ratio * output.virtual_size.height, animate=False)
+
+    def _panel_focused(self) -> bool:
+        return self.query_one("#describe-panel").has_focus
+
+    def action_toggle_search(self) -> None:
+        if self._search_open:
+            self._close_search()
+        else:
+            self._search_open = True
+            self.query_one("#describe-controls").display = True
+            self.query_one("#describe-search", Input).focus()
+
+    def action_next_match(self) -> None:
+        if not self._match_indices:
+            return
+        self._match_cursor = (self._match_cursor + 1) % len(self._match_indices)
+        hl = self._match_indices[self._match_cursor]
+        self._render_content(highlight_line=hl)
+        self._update_match_status()
+        self._scroll_to_line(hl)
+
+    def action_prev_match(self) -> None:
+        if not self._match_indices:
+            return
+        self._match_cursor = (self._match_cursor - 1) % len(self._match_indices)
+        hl = self._match_indices[self._match_cursor]
+        self._render_content(highlight_line=hl)
+        self._update_match_status()
+        self._scroll_to_line(hl)
+
+    def action_scroll_down(self) -> None:
+        if self._panel_focused():
+            self.query_one("#describe-panel", VerticalScroll).scroll_down(animate=False)
+
+    def action_scroll_up(self) -> None:
+        if self._panel_focused():
+            self.query_one("#describe-panel", VerticalScroll).scroll_up(animate=False)
+
+    def action_scroll_top(self) -> None:
+        if self._panel_focused():
+            self.query_one("#describe-panel", VerticalScroll).scroll_home(animate=False)
+
+    def action_scroll_bottom(self) -> None:
+        if self._panel_focused():
+            self.query_one("#describe-panel", VerticalScroll).scroll_end(animate=False)
 
     def action_copy_describe(self) -> None:
         full = self.describe_text
@@ -770,59 +1058,123 @@ class EventsScreen(Screen[None]):
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("escape", "close", "Back"),
         ("d", "open_event_detail", "Detail"),
-        ("up", "focus_previous", "Prev"),
-        ("down", "focus_next", "Next"),
+        ("/", "toggle_search", "Search"),
+        ("j", "next_row", "Next"),
+        ("k", "previous_row", "Prev"),
+        ("g", "jump_top", "Top"),
+        ("G", "jump_bottom", "Bottom"),
+        ("down", "next_row", ""),
+        ("up", "previous_row", ""),
     ]
 
-    def __init__(
-        self,
-        *,
-        events: list[EventSummary],
-        title: str,
-    ) -> None:
+    def __init__(self, *, events: list[EventSummary], title: str) -> None:
         super().__init__()
         self.events = events
+        self._visible_events: list[EventSummary] = list(events)
         self.screen_title = title
+        self._search_open: bool = False
 
     def compose(self) -> ComposeResult:
         yield Static(self.screen_title, id="events-title")
-        yield DataTable(id="events-table")
-        with Vertical(id="events-detail-panel"):
-            yield Static("Event Detail", id="events-detail-title", classes="panel-title")
-            yield Static("(no event selected)", id="events-detail-content")
+        with Horizontal(id="events-controls"):
+            yield Input(placeholder="search  (escape to close)", id="events-search")
+            yield Static("", id="events-match-status")
+        with Horizontal(id="events-body"):
+            yield DataTable(id="events-table")
+            with Vertical(id="events-detail-panel"):
+                yield Static("Event Detail", id="events-detail-title", classes="panel-title")
+                yield Static("(no event selected)", id="events-detail-content")
         yield Footer()
 
     def on_mount(self) -> None:
+        self._rebuild_table()
+        self.query_one("#events-controls").display = False
+        self.query_one("#events-detail-panel", Vertical).display = False
+        self.query_one("#events-table").focus()
+
+    def _rebuild_table(self) -> None:
         table = self.query_one("#events-table", DataTable)
+        table.clear(columns=True)
         table.cursor_type = "row"
         table.zebra_stripes = True
         table.add_columns("Type", "Reason", "Age", "Count", "Message")
-        for ev in self.events:
+        for ev in self._visible_events:
             table.add_row(ev.type, ev.reason, ev.age, str(ev.count), ev.message)
-        self.query_one("#events-detail-panel", Vertical).display = False
-        table.focus()
+        self._update_match_status()
+
+    def _update_match_status(self) -> None:
+        status = self.query_one("#events-match-status", Static)
+        search = self.query_one("#events-search", Input)
+        if not search.value.strip():
+            status.update("")
+        else:
+            status.update(f"{len(self._visible_events)}/{len(self.events)}")
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "events-search":
+            return
+        term = event.value.strip().lower()
+        if not term:
+            self._visible_events = list(self.events)
+        else:
+            self._visible_events = [
+                ev for ev in self.events
+                if term in ev.type.lower()
+                or term in ev.reason.lower()
+                or term in ev.message.lower()
+            ]
+        self._rebuild_table()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "events-search":
+            self.query_one("#events-table").focus()
+
+    def on_key(self, event: events.Key) -> None:
+        search = self.query_one("#events-search", Input)
+        if search.has_focus and event.key == "escape":
+            event.stop()
+            self._close_search()
+
+    def _close_search(self) -> None:
+        self._search_open = False
+        self.query_one("#events-controls").display = False
+        self.query_one("#events-table").focus()
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
-        if event.cursor_row >= len(self.events):
+        if event.cursor_row >= len(self._visible_events):
             return
-        detail = self.query_one("#events-detail-content", Static)
-        detail.update(render_event_details(self.events[event.cursor_row]))
+        self.query_one("#events-detail-content", Static).update(
+            render_event_details(self._visible_events[event.cursor_row])
+        )
+
+    def action_toggle_search(self) -> None:
+        if self._search_open:
+            self._close_search()
+        else:
+            self._search_open = True
+            self.query_one("#events-controls").display = True
+            self.query_one("#events-search", Input).focus()
 
     def action_open_event_detail(self) -> None:
-        panel = self.query_one("#events-detail-panel", Vertical)
-        panel.display = not panel.display
+        self.query_one("#events-detail-panel", Vertical).display = not self.query_one(
+            "#events-detail-panel", Vertical
+        ).display
 
-    def action_focus_previous(self) -> None:
+    def action_next_row(self) -> None:
         table = self.query_one("#events-table", DataTable)
-        row = table.cursor_row
-        if row is not None and row > 0:
-            table.move_cursor(row=row - 1, animate=False)
+        table.move_cursor(row=min(table.cursor_row + 1, table.row_count - 1), animate=False)
 
-    def action_focus_next(self) -> None:
+    def action_previous_row(self) -> None:
         table = self.query_one("#events-table", DataTable)
-        row = table.cursor_row
-        if row is not None and row < table.row_count - 1:
-            table.move_cursor(row=row + 1, animate=False)
+        table.move_cursor(row=max(table.cursor_row - 1, 0), animate=False)
+
+    def action_jump_top(self) -> None:
+        self.query_one("#events-table", DataTable).move_cursor(row=0, animate=False)
+
+    def action_jump_bottom(self) -> None:
+        table = self.query_one("#events-table", DataTable)
+        if table.row_count > 0:
+            table.move_cursor(row=table.row_count - 1, animate=False)
 
     def action_close(self) -> None:
         self.app.pop_screen()

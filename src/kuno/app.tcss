@@ -169,3 +169,166 @@ LogsScreen {
     height: auto;
     margin-top: 1;
 }
+
+#manifest-title {
+    border: round $accent;
+    height: auto;
+    margin: 1 1 0 1;
+    padding: 0 1;
+}
+
+#manifest-controls {
+    height: 3;
+    margin: 1 1 0 1;
+}
+
+#manifest-search {
+    border: round $accent;
+    height: 3;
+    width: 1fr;
+}
+
+#manifest-match-status {
+    color: $text-muted;
+    content-align: center middle;
+    height: 3;
+    margin-left: 1;
+    width: auto;
+}
+
+#manifest-panel {
+    border: round $accent;
+    height: 1fr;
+    margin: 1;
+    padding: 0 1;
+}
+
+#describe-title {
+    border: round $accent;
+    height: auto;
+    margin: 1 1 0 1;
+    padding: 0 1;
+}
+
+#describe-controls {
+    height: 3;
+    margin: 1 1 0 1;
+}
+
+#describe-search {
+    border: round $accent;
+    height: 3;
+    width: 1fr;
+}
+
+#describe-match-status {
+    color: $text-muted;
+    content-align: center middle;
+    height: 3;
+    margin-left: 1;
+    width: auto;
+}
+
+#describe-body {
+    height: 1fr;
+    margin: 1;
+}
+
+#describe-panel {
+    border: round $accent;
+    height: 1fr;
+    padding: 0 1;
+    width: 2fr;
+}
+
+#describe-events-panel {
+    border: round $accent;
+    height: 1fr;
+    margin-left: 1;
+    width: 1fr;
+}
+
+#describe-events {
+    height: 1fr;
+    padding: 1;
+}
+
+#events-title {
+    border: round $accent;
+    height: auto;
+    margin: 1 1 0 1;
+    padding: 0 1;
+}
+
+#events-controls {
+    height: 3;
+    margin: 1 1 0 1;
+}
+
+#events-search {
+    border: round $accent;
+    height: 3;
+    width: 1fr;
+}
+
+#events-match-status {
+    color: $text-muted;
+    content-align: center middle;
+    height: 3;
+    margin-left: 1;
+    width: auto;
+}
+
+#events-body {
+    height: 1fr;
+    margin: 1;
+}
+
+#events-table {
+    border: round $accent;
+    height: 1fr;
+    width: 2fr;
+}
+
+#events-detail-panel {
+    border: round $accent;
+    display: none;
+    height: 1fr;
+    margin-left: 1;
+    width: 1fr;
+}
+
+#events-detail-content {
+    height: 1fr;
+    padding: 1;
+}
+
+#config-title {
+    border: round $accent;
+    height: auto;
+    margin: 1 1 0 1;
+    padding: 0 1;
+}
+
+#config-panel {
+    border: round $accent;
+    height: 1fr;
+    margin: 1;
+    padding: 1;
+}
+
+.config-section {
+    height: auto;
+    margin-bottom: 1;
+}
+
+.config-row {
+    height: auto;
+    margin-bottom: 1;
+    margin-top: 1;
+}
+
+.config-label {
+    padding: 1 2 0 1;
+    width: 20;
+}
