@@ -20,11 +20,15 @@ from kuno.models import StartupConfig
     ],
 )
 def test_parse_args_supports_aliases(argv: list[str], expected: StartupConfig) -> None:
-    assert parse_args(argv) == expected
+    cfg, debug = parse_args(argv)
+    assert cfg == expected
+    assert debug is False
 
 
 def test_parse_args_allows_duplicate_same_value() -> None:
-    assert parse_args(["-c", "prod", "--context", "prod"]) == StartupConfig(context="prod")
+    cfg, debug = parse_args(["-c", "prod", "--context", "prod"])
+    assert cfg == StartupConfig(context="prod")
+    assert debug is False
 
 
 def test_parse_args_rejects_conflicting_context_values() -> None:

@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Iterable
 from contextlib import suppress
 from textwrap import wrap as text_wrap
 from typing import ClassVar
 
+from rich.syntax import Syntax
 from textual import events, work
 from textual.app import App, ComposeResult, SystemCommand
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Button, DataTable, Footer, Input, Log, Static
+from textual.widgets import Button, DataTable, Footer, Input, Log, RichLog, Static
 
 from kuno.commands import ParsedCommand, parse_command, suggest_commands
+from kuno.config import DEFAULT_CONFIG_PATH, KunoConfig, save_config
 from kuno.k8s.actions import delete_resource, restart_resource
 from kuno.k8s.client import KubeClient
 from kuno.k8s.config import (
@@ -21,20 +24,27 @@ from kuno.k8s.config import (
     load_startup_targets,
 )
 from kuno.k8s.resources import (
+    get_resource_events,
+    get_resource_yaml,
     list_deployments,
+    list_namespace_events,
     list_namespace_summaries,
     list_namespaces,
     list_pod_containers,
     list_pods,
+    list_pods_for_workload,
     list_pvcs,
     list_secrets,
     list_services,
     list_statefulsets,
     parse_since_duration,
     read_pod_logs,
+    read_resource,
     render_container_details,
     render_context_details,
     render_deployment_details,
+    render_describe_text,
+    render_event_details,
     render_namespace_details,
     render_pod_details,
     render_pvc_details,
@@ -49,14 +59,17 @@ from kuno.models import (
     ContainerSummary,
     ContextSummary,
     DeploymentSummary,
+    EventSummary,
     ExplorerView,
     NamespaceSummary,
+    PodSource,
     PodSummary,
     PvcSummary,
     SecretSummary,
     ServiceSummary,
     StartupConfig,
     StatefulSetSummary,
+    WorkloadSource,
 )
 
 
@@ -106,8 +119,13 @@ class LogsScreen(Screen[None]):
         ("r", "reload", "Reload"),
         ("t", "toggle_timestamps", "Timestamps"),
         ("up", "previous_line", "Prev"),
-        ("ctrl+l", "clear_filter", "Clear Filter"),
+        ("ctrl+u", "clear_filter", "Clear Filter"),
         ("w", "toggle_wrap", "Wrap"),
+        ("ctrl+h", "previous_container", "Prev Ctnr"),
+        ("ctrl+l", "next_container", "Next Ctnr"),
+        ("bracketleft", "previous_replica", "Prev Pod"),
+        ("bracketright", "next_replica", "Next Pod"),
+        ("a", "all_replicas", "All Pods"),
     ]
 
     def __init__(
@@ -115,8 +133,8 @@ class LogsScreen(Screen[None]):
         *,
         context: str,
         namespace: str,
-        pod_name: str,
-        container_name: str | None,
+        logs_source: PodSource | WorkloadSource,
+        kuno_config: KunoConfig,
     ) -> None:
         super().__init__()
         self.context = context
@@ -125,22 +143,43 @@ class LogsScreen(Screen[None]):
         self.log_lines: list[str] = []
         self.mode = LogMode.RAW
         self.namespace = namespace
-        self.pod_name = pod_name
-        self.container_name = container_name
+        self.logs_source = logs_source
+        self.pod_name = self._resolve_pod_name()
+        self.container_name = self._resolve_container_name()
         self.details_visible = False
         self.rendered_log_spans: list[tuple[int, int, int]] = []
         self.selected_log_index = 0
         self.since_text = ""
-        self.stream_worker = None
-        self.timestamps_enabled = False
-        self.wrap_enabled = False
+        self.stream_workers: list = []
+        self.timestamps_enabled = kuno_config.timestamps_enabled
+        self.wrap_enabled = kuno_config.wrap_logs
+        self.kuno_config = kuno_config
+
+    def _resolve_pod_name(self) -> str:
+        if isinstance(self.logs_source, WorkloadSource):
+            if self.logs_source.pod_names:
+                return f"{self.logs_source.kind}/{self.logs_source.name}"
+            return self.logs_source.name
+        return self.logs_source.pod_name
+
+    def _resolve_container_name(self) -> str | None:
+        if isinstance(self.logs_source, WorkloadSource):
+            return None
+        return self.logs_source.container_name
+
+    def _is_multi_stream(self) -> bool:
+        return isinstance(self.logs_source, WorkloadSource)
+
+    def _current_pod_name(self) -> str | None:
+        if not self._is_multi_stream():
+            return self.pod_name
+        focused = getattr(self, "focused_pod", None)
+        if isinstance(self.logs_source, WorkloadSource):
+            return focused or (self.logs_source.pod_names[0] if self.logs_source.pod_names else None)
+        return None
 
     def compose(self) -> ComposeResult:
-        target = (
-            self.pod_name
-            if self.container_name is None
-            else f"{self.pod_name}/{self.container_name}"
-        )
+        target = self._display_target()
         yield Static(
             self._title_text(target),
             id="logs-title",
@@ -166,12 +205,30 @@ class LogsScreen(Screen[None]):
     async def load_logs(self) -> None:
         output = self.query_one("#logs-output", Log)
         output.clear()
+        self.log_lines = []
+
+        if self._is_multi_stream():
+            await self._load_all_pod_logs()
+        else:
+            await self._load_single_pod_logs()
+
+        if self.log_lines:
+            self.selected_log_index = len(self.log_lines) - 1
+        else:
+            self.selected_log_index = 0
+        self._render_logs()
+
+    async def _load_single_pod_logs(self) -> None:
+        output = self.query_one("#logs-output", Log)
+        pod_name = self._current_pod_name()
+        if pod_name is None:
+            return
         try:
             async with KubeClient(context=self.context) as kube_client:
                 logs = await read_pod_logs(
                     kube_client,
                     self.namespace,
-                    self.pod_name,
+                    pod_name,
                     container_name=self.container_name,
                     since_seconds=parse_since_duration(self.since_text),
                     timestamps=self.timestamps_enabled,
@@ -179,13 +236,29 @@ class LogsScreen(Screen[None]):
         except Exception as error:
             output.write(f"error: {error}")
             return
-
         self.log_lines = logs.splitlines() if logs else []
-        if self.log_lines:
-            self.selected_log_index = len(self.log_lines) - 1
-        else:
-            self.selected_log_index = 0
-        self._render_logs()
+
+    async def _load_all_pod_logs(self) -> None:
+        output = self.query_one("#logs-output", Log)
+        if not isinstance(self.logs_source, WorkloadSource):
+            return
+        merged: list[str] = []
+        for pod_name in self.logs_source.pod_names:
+            try:
+                async with KubeClient(context=self.context) as kube_client:
+                    logs = await read_pod_logs(
+                        kube_client,
+                        self.namespace,
+                        pod_name,
+                        container_name=None,
+                        tail_lines=self.kuno_config.tail_lines,
+                        timestamps=self.timestamps_enabled,
+                    )
+            except Exception as error:
+                output.write(f"[{pod_name}] error: {error}")
+                continue
+            merged.extend(f"[{pod_name}] {line}" for line in logs.splitlines())
+        self.log_lines = merged
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "logs-filter":
@@ -253,6 +326,8 @@ class LogsScreen(Screen[None]):
 
     def action_toggle_timestamps(self) -> None:
         self.timestamps_enabled = not self.timestamps_enabled
+        self.kuno_config.timestamps_enabled = self.timestamps_enabled
+        save_config(self.kuno_config)
         self._update_title()
         self.load_logs()
         if self.follow_enabled:
@@ -260,6 +335,8 @@ class LogsScreen(Screen[None]):
 
     def action_toggle_wrap(self) -> None:
         self.wrap_enabled = not self.wrap_enabled
+        self.kuno_config.wrap_logs = self.wrap_enabled
+        save_config(self.kuno_config)
         self._update_title()
         self._render_logs()
 
@@ -307,14 +384,83 @@ class LogsScreen(Screen[None]):
         if self.details_visible:
             self._update_detail_panel()
 
+    def action_previous_container(self) -> None:
+        if self._is_multi_stream():
+            return
+        if not isinstance(self.logs_source, PodSource) or not self.logs_source.all_containers:
+            return
+        containers = self.logs_source.all_containers
+        current = self.container_name
+        if current is None and containers:
+            idx = 0
+        elif current in containers:
+            idx = (containers.index(current) - 1) % len(containers)
+        else:
+            idx = 0
+        self.container_name = containers[idx]
+        self.pod_name = self.logs_source.pod_name
+        self.load_logs()
+        if self.follow_enabled:
+            self._start_streaming()
+
+    def action_next_container(self) -> None:
+        if self._is_multi_stream():
+            return
+        if not isinstance(self.logs_source, PodSource) or not self.logs_source.all_containers:
+            return
+        containers = self.logs_source.all_containers
+        current = self.container_name
+        if current is None and containers:
+            idx = 0
+        elif current in containers:
+            idx = (containers.index(current) + 1) % len(containers)
+        else:
+            idx = 0
+        self.container_name = containers[idx]
+        self.pod_name = self.logs_source.pod_name
+        self.load_logs()
+        if self.follow_enabled:
+            self._start_streaming()
+
+    def action_previous_replica(self) -> None:
+        if not self._is_multi_stream() or not isinstance(self.logs_source, WorkloadSource):
+            return
+        self._cycle_replica(-1)
+
+    def action_next_replica(self) -> None:
+        if not self._is_multi_stream() or not isinstance(self.logs_source, WorkloadSource):
+            return
+        self._cycle_replica(1)
+
+    def action_all_replicas(self) -> None:
+        if not self._is_multi_stream() or not isinstance(self.logs_source, WorkloadSource):
+            return
+        if hasattr(self, "focused_pod"):
+            delattr(self, "focused_pod")
+        self.load_logs()
+        if self.follow_enabled:
+            self._start_streaming()
+
+    def _cycle_replica(self, direction: int) -> None:
+        if not isinstance(self.logs_source, WorkloadSource):
+            return
+        pod_names = self.logs_source.pod_names
+        if not pod_names:
+            return
+        current = getattr(self, "focused_pod", pod_names[0])
+        idx = (pod_names.index(current) + direction) % len(pod_names) if current in pod_names else 0
+        self.focused_pod = pod_names[idx]
+        self.load_logs()
+        if self.follow_enabled:
+            self._start_streaming()
+
     def _render_logs(self) -> None:
         output = self.query_one("#logs-output", Log)
         output.clear()
         output.auto_scroll = self.follow_enabled
         lines = self._display_entries()
         if lines:
-            for line in lines:
-                output.write(line)
+            output.write("\n".join(lines))
             if self.follow_enabled or self.selected_log_index == len(self.log_lines) - 1:
                 output.scroll_end(animate=False, immediate=True, x_axis=False)
         elif self.log_lines:
@@ -323,43 +469,63 @@ class LogsScreen(Screen[None]):
             output.write("(no logs)")
         self._update_detail_panel()
 
-    async def stream_logs(self) -> None:
+    async def stream_logs_single(self, pod_name: str, container_name: str | None) -> None:
         output = self.query_one("#logs-output", Log)
+        prefix = f"[{pod_name}] " if self._is_multi_stream() else ""
         try:
             async with KubeClient(context=self.context) as kube_client:
                 async for line in stream_pod_logs(
                     kube_client,
                     self.namespace,
-                    self.pod_name,
-                    container_name=self.container_name,
+                    pod_name,
+                    container_name=container_name,
                     since_seconds=parse_since_duration(self.since_text),
                     timestamps=self.timestamps_enabled,
                 ):
-                    self.log_lines.append(line)
+                    prefixed = f"{prefix}{line}"
+                    self.log_lines.append(prefixed)
                     self.selected_log_index = len(self.log_lines) - 1
-                    if self.filter_text and self.filter_text not in line:
+                    if self.filter_text and self.filter_text not in prefixed:
                         continue
-                    rendered = self._entry_renderables(line, selected=True)
+                    rendered = self._entry_renderables(prefixed, selected=True)
                     if self.wrap_enabled:
-                        for wrapped_line in self._wrap_lines(rendered):
-                            output.write(wrapped_line)
+                        output.write("\n".join(self._wrap_lines(rendered)) + "\n")
                     else:
-                        for item in rendered:
-                            output.write(str(item))
+                        output.write("\n".join(str(item) for item in rendered) + "\n")
                     output.scroll_end(animate=False, immediate=True, x_axis=False)
         except Exception as error:
-            output.write(f"error: {error}")
+            output.write(f"{prefix}error: {error}")
 
     def _start_streaming(self) -> None:
         self._stop_streaming()
-        self.stream_worker = self.run_worker(
-            self.stream_logs(), exclusive=True, group="logs-stream"
-        )
+        if self._is_multi_stream() and isinstance(self.logs_source, WorkloadSource):
+            pod_names = (
+                [self.focused_pod]
+                if hasattr(self, "focused_pod") and self.focused_pod
+                else self.logs_source.pod_names
+            )
+            for pod_name in pod_names:
+                worker = self.run_worker(
+                    self.stream_logs_single(pod_name, None),
+                    exclusive=False,
+                    group="logs-stream",
+                )
+                self.stream_workers.append(worker)
+        else:
+            pod_name = self._current_pod_name()
+            if pod_name is None:
+                return
+            worker = self.run_worker(
+                self.stream_logs_single(pod_name, self.container_name),
+                exclusive=True,
+                group="logs-stream",
+            )
+            self.stream_workers.append(worker)
 
     def _stop_streaming(self) -> None:
-        if self.stream_worker is not None:
-            self.stream_worker.cancel()
-            self.stream_worker = None
+        for worker in self.stream_workers:
+            worker.cancel()
+        self.stream_workers = []
 
     def _wrap_lines(self, lines: list[str]) -> list[str]:
         output = self.query_one("#logs-output", Log)
@@ -372,27 +538,44 @@ class LogsScreen(Screen[None]):
             wrapped.extend(pieces or [""])
         return wrapped
 
+    def _display_target(self) -> str:
+        if isinstance(self.logs_source, WorkloadSource):
+            return f"{self.logs_source.kind}/{self.logs_source.name}"
+        if self.container_name:
+            return f"{self.logs_source.pod_name}/{self.container_name}"
+        return self.logs_source.pod_name
+
     def _title_text(self, target: str) -> str:
         follow = "on" if self.follow_enabled else "off"
         mode = self.mode.value
         timestamps = "on" if self.timestamps_enabled else "off"
         wrap = "on" if self.wrap_enabled else "off"
+        if isinstance(self.logs_source, WorkloadSource):
+            focused = getattr(self, "focused_pod", None)
+            replica_info = (
+                f"pod: {focused}"
+                if focused
+                else f"all {len(self.logs_source.pod_names)} pods"
+            )
+            return (
+                "Logs\n"
+                f"context: {self.context}\n"
+                f"namespace: {self.namespace}\n"
+                f"target: {target}\n"
+                f"mode: {mode} [m]  follow: {follow} [f]  timestamps: {timestamps} [t]  wrap: {wrap} [w]\n"
+                f"{replica_info}  since: {self.since_text or 'all'} [s]  filter: /  reload: r  clear filter: ctrl+u  back: esc"
+            )
         return (
             "Logs\n"
             f"context: {self.context}\n"
             f"namespace: {self.namespace}\n"
             f"target: {target}\n"
             f"mode: {mode} [m]  follow: {follow} [f]  timestamps: {timestamps} [t]  wrap: {wrap} [w]\n"
-            f"since: {self.since_text or 'all'} [s]  filter: /  reload: r  clear filter: ctrl+l  back: esc"
+            f"since: {self.since_text or 'all'} [s]  filter: /  reload: r  clear filter: ctrl+u  back: esc"
         )
 
     def _update_title(self) -> None:
-        target = (
-            self.pod_name
-            if self.container_name is None
-            else f"{self.pod_name}/{self.container_name}"
-        )
-        self.query_one("#logs-title", Static).update(self._title_text(target))
+        self.query_one("#logs-title", Static).update(self._title_text(self._display_target()))
 
     def action_close(self) -> None:
         self._stop_streaming()
@@ -457,24 +640,171 @@ class LogsScreen(Screen[None]):
             rendered = self._wrap_lines(list(rendered))
         if not selected or self.follow_enabled:
             return rendered
-        return [f"> {line}" for line in rendered]
+        return [f"[on grey15]{line}[/]" for line in rendered]
+
+
+class ManifestScreen(Screen[None]):
+    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
+        ("escape", "close", "Back"),
+        ("y", "copy_manifest", "Copy"),
+    ]
+
+    def __init__(
+        self, *, yaml_content: str, resource_name: str, yaml_theme: str
+    ) -> None:
+        super().__init__()
+        self.yaml_content = yaml_content
+        self.resource_name = resource_name
+        self.yaml_theme = yaml_theme
+
+    def compose(self) -> ComposeResult:
+        yield Static(f"YAML — {self.resource_name}", id="manifest-title")
+        with VerticalScroll(id="manifest-scroll"):
+            yield RichLog(id="manifest-output", highlight=True, markup=True)
+        yield Footer()
+
+    def on_mount(self) -> None:
+        output = self.query_one("#manifest-output", RichLog)
+        code = Syntax(self.yaml_content, "yaml", theme=self.yaml_theme, line_numbers=False)
+        output.write(code)
+
+    def action_copy_manifest(self) -> None:
+        self.app.copy_to_clipboard(self.yaml_content)
+        self.notify("Copied YAML to clipboard")
+
+    def action_close(self) -> None:
+        self.app.pop_screen()
+
+
+class DescribeScreen(Screen[None]):
+    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
+        ("escape", "close", "Back"),
+        ("y", "copy_describe", "Copy"),
+    ]
+
+    def __init__(
+        self, *, describe_text: str, resource_name: str, events: list[EventSummary] | None = None
+    ) -> None:
+        super().__init__()
+        self.describe_text = describe_text
+        self.resource_name = resource_name
+        self.events = events or []
+
+    def compose(self) -> ComposeResult:
+        yield Static(f"Describe — {self.resource_name}", id="describe-title")
+        with VerticalScroll(id="describe-scroll"):
+            yield Static("", id="describe-content")
+            if self.events:
+                yield Static("", id="describe-events-title")
+                yield Static("", id="describe-events")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        content = self.query_one("#describe-content", Static)
+        content.update(self.describe_text)
+        if self.events:
+            events_title = self.query_one("#describe-events-title", Static)
+            events_content = self.query_one("#describe-events", Static)
+            events_title.update("\nEvents:")
+            lines: list[str] = [
+                f"  {ev.age:>10}  {ev.type:>7}  {ev.reason:<20}  {ev.count:>3}  {ev.message}"
+                for ev in self.events
+            ]
+            events_content.update("\n".join(lines) if lines else "  (none)")
+
+    def action_copy_describe(self) -> None:
+        full = self.describe_text
+        if self.events:
+            full += "\n\nEvents:\n"
+            for ev in self.events:
+                full += f"  {ev.age:>10}  {ev.type:>7}  {ev.reason:<20}  {ev.count:>3}  {ev.message}\n"
+        self.app.copy_to_clipboard(full)
+        self.notify("Copied description to clipboard")
+
+    def action_close(self) -> None:
+        self.app.pop_screen()
+
+
+class EventsScreen(Screen[None]):
+    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
+        ("escape", "close", "Back"),
+        ("d", "open_event_detail", "Detail"),
+        ("up", "focus_previous", "Prev"),
+        ("down", "focus_next", "Next"),
+    ]
+
+    def __init__(
+        self,
+        *,
+        events: list[EventSummary],
+        title: str,
+    ) -> None:
+        super().__init__()
+        self.events = events
+        self.screen_title = title
+
+    def compose(self) -> ComposeResult:
+        yield Static(self.screen_title, id="events-title")
+        yield DataTable(id="events-table")
+        with Vertical(id="events-detail-panel"):
+            yield Static("Event Detail", id="events-detail-title", classes="panel-title")
+            yield Static("(no event selected)", id="events-detail-content")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        table = self.query_one("#events-table", DataTable)
+        table.cursor_type = "row"
+        table.zebra_stripes = True
+        table.add_columns("Type", "Reason", "Age", "Count", "Message")
+        for ev in self.events:
+            table.add_row(ev.type, ev.reason, ev.age, str(ev.count), ev.message)
+        self.query_one("#events-detail-panel", Vertical).display = False
+        table.focus()
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        if event.cursor_row >= len(self.events):
+            return
+        detail = self.query_one("#events-detail-content", Static)
+        detail.update(render_event_details(self.events[event.cursor_row]))
+
+    def action_open_event_detail(self) -> None:
+        panel = self.query_one("#events-detail-panel", Vertical)
+        panel.display = not panel.display
+
+    def action_focus_previous(self) -> None:
+        table = self.query_one("#events-table", DataTable)
+        row = table.cursor_row
+        if row is not None and row > 0:
+            table.move_cursor(row=row - 1, animate=False)
+
+    def action_focus_next(self) -> None:
+        table = self.query_one("#events-table", DataTable)
+        row = table.cursor_row
+        if row is not None and row < table.row_count - 1:
+            table.move_cursor(row=row + 1, animate=False)
+
+    def action_close(self) -> None:
+        self.app.pop_screen()
 
 
 class KunoApp(App[None]):
     CSS_PATH = "app.tcss"
     MAX_COMMAND_SUGGESTIONS = 4
-    theme = "nord"
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("backspace", "go_back", "Back"),
+        ("ctrl+d", "describe_selected", "Describe"),
         ("d", "toggle_details", "Details"),
+        ("e", "events_selected", "Events"),
         ("l", "open_logs", "Logs"),
         ("colon", "open_command_bar", "Command"),
         ("escape", "close_command_bar", "Close"),
         ("r", "refresh_pods", "Refresh"),
+        ("y", "yaml_selected", "YAML"),
     ]
 
-    def __init__(self, startup_config: StartupConfig) -> None:
+    def __init__(self, startup_config: StartupConfig, kuno_config: KunoConfig | None = None) -> None:
         super().__init__()
+        self.kuno_config = kuno_config if kuno_config is not None else KunoConfig(path=DEFAULT_CONFIG_PATH)
         self.available_contexts: list[str] = []
         self.available_namespaces: list[str] = []
         self.command_bar_visible = False
@@ -495,6 +825,18 @@ class KunoApp(App[None]):
         self.services: list[ServiceSummary] = []
         self.statefulsets: list[StatefulSetSummary] = []
         self.resolved_startup_config: StartupConfig | None = None
+        self._pending_single_container_check = False
+        self.debug_enabled = False
+
+    def _dblog(self, msg: str) -> None:
+        if not self.debug_enabled:
+            return
+        ts = time.strftime("%H:%M:%S")
+        try:
+            with open("/tmp/kuno_debug.log", "a") as f:
+                f.write(f"[{ts}] {msg}\n")
+        except Exception:
+            pass
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="summary-bar"):
@@ -515,7 +857,10 @@ class KunoApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
+        self._dblog("on_mount start")
+        self.theme = self.kuno_config.theme
         back_button = self.query_one("#back-button", Button)
+        self._dblog(f"theme set to {self.theme}")
         command_area = self.query_one("#command-area", Vertical)
         details_panel = self.query_one("#details-panel", Vertical)
         summary = self.query_one("#startup-summary", Static)
@@ -529,31 +874,52 @@ class KunoApp(App[None]):
         pod_table.zebra_stripes = True
         self._configure_table_columns()
         self.available_contexts = load_available_context_names()
+        self._dblog(f"available contexts: {self.available_contexts}")
         try:
             self.resolved_startup_config = load_startup_targets(self.startup_config)
+            self._dblog(f"resolved_startup={self.resolved_startup_config}")
         except UnknownContextError as error:
+            self._dblog(f"UnknownContextError: {error}")
             summary.update(f"kuno\nerror: {error}")
             pod_details.update("pod\n(startup failed)")
             return
 
         summary.update(self._summary_text())
+        self._dblog("calling refresh_current_view")
         self.refresh_current_view()
+        self._dblog("on_mount done")
 
     @work(exclusive=True)
     async def refresh_current_view(self) -> None:
+        self._dblog(f"refresh_current_view started, view={self.current_view}")
+        try:
+            await self._do_refresh_current_view()
+        except Exception as error:
+            self._dblog(f"refresh_current_view ERROR: {error}")
+            self.notify(
+                f"Error loading {self.current_view.value}: {error}",
+                severity="error",
+                timeout=10,
+            )
+
+    async def _do_refresh_current_view(self) -> None:
         pod_details = self.query_one("#pod-details", Static)
         if self.resolved_startup_config is None:
+            self._dblog("resolved_startup_config is None")
             pod_details.update(f"{self._view_singular()}\n(startup not resolved)")
             return
 
         context = self.resolved_startup_config.context
         namespace = self.resolved_startup_config.namespace
         if context is None or namespace is None:
+            self._dblog(f"context/namespace is None: ctx={context}, ns={namespace}")
             pod_details.update(f"{self._view_singular()}\n(startup not resolved)")
             return
 
+        self._dblog(f"connecting to context={context}, namespace={namespace}")
         try:
             async with KubeClient(context=context) as kube_client:
+                self._dblog("kube client connected")
                 if self.current_view is ExplorerView.PODS:
                     self.container_pod_name = None
                     self.containers = []
@@ -681,6 +1047,25 @@ class KunoApp(App[None]):
             self._update_pod_details(0)
         else:
             pod_details.update(f"{self._view_singular()}\n(no {self.current_view.value} found)")
+
+        if self._pending_single_container_check and self.current_view is ExplorerView.CONTAINERS:
+            self._pending_single_container_check = False
+            if len(self.containers) == 1:
+                self.navigation_stack.pop()
+                self._update_back_button()
+                target = self._require_target()
+                if target.context and target.namespace:
+                    self.push_screen(
+                        LogsScreen(
+                            context=target.context,
+                            namespace=target.namespace,
+                            logs_source=PodSource(
+                                pod_name=self.container_pod_name or "",
+                                container_name=self.containers[0].name,
+                            ),
+                            kuno_config=self.kuno_config,
+                        )
+                    )
 
     async def _render_pod_table(self) -> None:
         pod_table = self.query_one("#pod-table", DataTable)
@@ -1087,6 +1472,7 @@ class KunoApp(App[None]):
         self._push_navigation_state()
         self.container_pod_name = self.pods[index].name
         self.current_view = ExplorerView.CONTAINERS
+        self._pending_single_container_check = True
         self.refresh_current_view()
 
     def _command_containers(self) -> None:
@@ -1182,22 +1568,172 @@ class KunoApp(App[None]):
     def action_open_logs(self) -> None:
         self._command_logs()
 
+    def action_describe_selected(self) -> None:
+        self._command_describe()
+
+    def action_yaml_selected(self) -> None:
+        self._command_yaml()
+
+    def action_events_selected(self) -> None:
+        self._command_events()
+
+    def _command_describe(self) -> None:
+        selection = self._selected_resource_name()
+        if selection is None:
+            self.notify("No resource selected", severity="warning")
+            return
+        target = self._require_target()
+        if target.context is None or target.namespace is None:
+            return
+        self._open_describe_async(selection, target)
+
+    @work(exclusive=True)
+    async def _open_describe_async(self, name: str, target: StartupConfig) -> None:
+        context = target.context
+        namespace = target.namespace
+        if context is None or namespace is None:
+            return
+        kind = self.current_view.value.rstrip("s")
+        try:
+            async with KubeClient(context=context) as kube_client:
+                item = await read_resource(kube_client, namespace, kind, name)
+                describe_text = render_describe_text(item)
+                events = await get_resource_events(kube_client, namespace, kind, name)
+        except Exception as error:
+            self.notify(f"Failed to describe {kind}/{name}: {error}", severity="error")
+            return
+        self.push_screen(
+            DescribeScreen(
+                describe_text=describe_text,
+                resource_name=f"{kind}/{name}",
+                events=events,
+            )
+        )
+
+    def _command_yaml(self) -> None:
+        selection = self._selected_resource_name()
+        if selection is None:
+            self.notify("No resource selected", severity="warning")
+            return
+        target = self._require_target()
+        if target.context is None or target.namespace is None:
+            return
+        self._open_yaml_async(selection, target)
+
+    @work(exclusive=True)
+    async def _open_yaml_async(self, name: str, target: StartupConfig) -> None:
+        context = target.context
+        namespace = target.namespace
+        if context is None or namespace is None:
+            return
+        kind = self.current_view.value.rstrip("s")
+        try:
+            async with KubeClient(context=context) as kube_client:
+                yaml_content = await get_resource_yaml(kube_client, namespace, kind, name)
+        except Exception as error:
+            self.notify(f"Failed to get YAML for {kind}/{name}: {error}", severity="error")
+            return
+        self.push_screen(
+            ManifestScreen(
+                yaml_content=yaml_content,
+                resource_name=f"{kind}/{name}",
+                yaml_theme=self.kuno_config.yaml_theme,
+            )
+        )
+
+    def _command_events(self) -> None:
+        selection = self._selected_resource_name()
+        if selection is None:
+            self._command_namespace_events()
+            return
+        target = self._require_target()
+        if target.context is None or target.namespace is None:
+            return
+        self._open_events_async(selection, target)
+
+    @work(exclusive=True)
+    async def _open_events_async(self, name: str, target: StartupConfig) -> None:
+        context = target.context
+        namespace = target.namespace
+        if context is None or namespace is None:
+            return
+        kind = self.current_view.value.rstrip("s")
+        try:
+            async with KubeClient(context=context) as kube_client:
+                events = await get_resource_events(kube_client, namespace, kind, name)
+        except Exception as error:
+            self.notify(f"Failed to get events: {error}", severity="error")
+            return
+        self.push_screen(
+            EventsScreen(
+                events=events,
+                title=f"Events — {kind}/{name}",
+            )
+        )
+
+    @work(exclusive=True)
+    async def _command_namespace_events(self) -> None:
+        target = self._require_target()
+        if target.context is None or target.namespace is None:
+            return
+        context = target.context
+        namespace = target.namespace
+        try:
+            async with KubeClient(context=context) as kube_client:
+                events = await list_namespace_events(kube_client, namespace)
+        except Exception as error:
+            self.notify(f"Failed to get events: {error}", severity="error")
+            return
+        self.push_screen(
+            EventsScreen(
+                events=events,
+                title=f"Events — {namespace}",
+            )
+        )
+
     def _command_logs(self) -> None:
-        target = self._selected_logs_target()
-        if target is None:
+        logs_source = self._selected_logs_source()
+        if logs_source is None:
             self.notify("Logs are not available for the current selection", severity="warning")
             return
         startup_target = self._require_target()
         if startup_target.context is None or startup_target.namespace is None:
             self.notify("Startup target is not resolved", severity="error")
             return
-        pod_name, container_name = target
+        self._open_logs_screen_async(logs_source, startup_target)
+
+    @work(exclusive=True)
+    async def _open_logs_screen_async(
+        self, logs_source: PodSource | WorkloadSource, startup_target: StartupConfig
+    ) -> None:
+        context = startup_target.context
+        namespace = startup_target.namespace
+        if context is None or namespace is None:
+            return
+
+        if isinstance(logs_source, WorkloadSource):
+            try:
+                async with KubeClient(context=context) as kube_client:
+                    pod_names = await list_pods_for_workload(
+                        kube_client, namespace, logs_source.kind, logs_source.name
+                    )
+                if not pod_names:
+                    self.notify(
+                        f"No pods found for {logs_source.kind}/{logs_source.name}",
+                        severity="warning",
+                    )
+                    return
+                logs_source.pod_names = pod_names
+            except Exception as error:
+                self.notify(f"Failed to resolve pods: {error}", severity="error")
+                return
+
         self.push_screen(
             LogsScreen(
-                context=startup_target.context,
-                namespace=startup_target.namespace,
-                pod_name=pod_name,
-                container_name=container_name,
+                context=context,
+                namespace=namespace,
+                logs_source=logs_source,
+                kuno_config=self.kuno_config,
             )
         )
 
@@ -1325,6 +1861,8 @@ class KunoApp(App[None]):
             self.action_change_theme()
             return
         self.theme = theme_name
+        self.kuno_config.theme = theme_name
+        save_config(self.kuno_config)
         self.notify(f"Switched theme to {self.theme}")
 
     def _command_show_details(self) -> None:
@@ -1384,9 +1922,14 @@ class KunoApp(App[None]):
         return self.current_view in {ExplorerView.DEPLOYMENTS, ExplorerView.STATEFULSETS}
 
     def _can_open_logs_selected(self) -> bool:
-        return self.current_view in {ExplorerView.PODS, ExplorerView.CONTAINERS}
+        return self.current_view in {
+            ExplorerView.PODS,
+            ExplorerView.CONTAINERS,
+            ExplorerView.DEPLOYMENTS,
+            ExplorerView.STATEFULSETS,
+        }
 
-    def _selected_logs_target(self) -> tuple[str, str | None] | None:
+    def _selected_logs_source(self) -> PodSource | WorkloadSource | None:
         pod_table = self.query_one("#pod-table", DataTable)
         cursor_row = pod_table.cursor_row
         if cursor_row is None or cursor_row < 0:
@@ -1394,12 +1937,35 @@ class KunoApp(App[None]):
         if self.current_view is ExplorerView.PODS:
             if cursor_row >= len(self.pods):
                 return None
-            return (self.pods[cursor_row].name, None)
+            return PodSource(pod_name=self.pods[cursor_row].name)
         if self.current_view is ExplorerView.CONTAINERS:
             if cursor_row >= len(self.containers):
                 return None
             container = self.containers[cursor_row]
-            return (container.pod, container.name)
+            return PodSource(
+                pod_name=container.pod,
+                container_name=container.name,
+            )
+        if self.current_view is ExplorerView.DEPLOYMENTS:
+            if cursor_row >= len(self.deployments):
+                return None
+            deployment = self.deployments[cursor_row]
+            return WorkloadSource(
+                kind="deployment",
+                name=deployment.name,
+                pod_names=[],
+                namespace=self._require_target().namespace or "",
+            )
+        if self.current_view is ExplorerView.STATEFULSETS:
+            if cursor_row >= len(self.statefulsets):
+                return None
+            sts = self.statefulsets[cursor_row]
+            return WorkloadSource(
+                kind="statefulset",
+                name=sts.name,
+                pod_names=[],
+                namespace=self._require_target().namespace or "",
+            )
         return None
 
     def _push_navigation_state(self) -> None:
@@ -1457,7 +2023,7 @@ class KunoApp(App[None]):
     def _update_pod_details(self, index: int | None) -> None:
         pod_details = self.query_one("#pod-details", Static)
         rows = self._current_rows()
-        if index is None or index >= len(rows):
+        if index is None or index < 0 or index >= len(rows):
             pod_details.update(f"{self._view_singular()}\n(no {self._view_singular()} selected)")
             return
         if self.current_view is ExplorerView.PODS:

@@ -306,7 +306,17 @@ async def test_app_can_go_back_from_containers_to_pods(monkeypatch) -> None:
                 image="ghcr.io/example/api:1.0.0",
                 cpu="250m",
                 memory="128Mi",
-            )
+            ),
+            ContainerSummary(
+                name="sidecar",
+                pod="api-1",
+                ready="yes",
+                state="Running",
+                restarts=0,
+                image="ghcr.io/example/sidecar:1.0.0",
+                cpu="100m",
+                memory="64Mi",
+            ),
         ]
 
     monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)

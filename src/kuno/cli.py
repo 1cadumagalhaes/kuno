@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from kuno.app import KunoApp
+from kuno.config import KunoConfig, load_config, merge_startup_config
 from kuno.models import StartupConfig
 
 
@@ -43,16 +44,49 @@ def build_parser() -> argparse.ArgumentParser:
         action=StoreUniqueValue,
         help="Kubernetes namespace to use",
     )
+    parser.add_argument(
+        "-d",
+        "--debug",
+        action="store_true",
+        help="Write debug output to /tmp/kuno_debug.log",
+    )
     return parser
 
 
-def parse_args(argv: Sequence[str] | None = None) -> StartupConfig:
+def parse_args(argv: Sequence[str] | None = None) -> tuple[StartupConfig, bool]:
     args = build_parser().parse_args(argv)
-    return StartupConfig(context=args.context, namespace=args.namespace)
+    return StartupConfig(context=args.context, namespace=args.namespace), args.debug
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    startup_config = parse_args(argv)
-    app = KunoApp(startup_config)
+def main(argv: Sequence[str] | None = None, config: KunoConfig | None = None) -> int:
+    kuno_config = config if config is not None else load_config()
+    cli_config, debug = parse_args(argv)
+    startup_config = merge_startup_config(kuno_config, cli_config)
+    app = KunoApp(startup_config, kuno_config)
+    if debug:
+        app.debug_enabled = True
+        _start_debug_log()
+        _dblog("kuno started")
+        _dblog(f"config_path={kuno_config.path}")
+        _dblog(f"startup={startup_config}")
+        _dblog(f"theme={kuno_config.theme}")
     app.run()
     return 0
+
+
+DEBUG_LOG_PATH = "/tmp/kuno_debug.log"
+
+
+def _start_debug_log() -> None:
+    with open(DEBUG_LOG_PATH, "w") as f:
+        f.write("=== kuno debug log ===\n")
+
+
+def _dblog(msg: str) -> None:
+    import time
+    ts = time.strftime("%H:%M:%S")
+    try:
+        with open(DEBUG_LOG_PATH, "a") as f:
+            f.write(f"[{ts}] {msg}\n")
+    except Exception:
+        pass

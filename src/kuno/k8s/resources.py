@@ -5,12 +5,14 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Protocol, cast
 
+import yaml
 from kubernetes_asyncio.client import AppsV1Api, CoreV1Api
 
 from kuno.models import (
     ContainerSummary,
     ContextSummary,
     DeploymentSummary,
+    EventSummary,
     NamespaceSummary,
     PodSummary,
     PvcSummary,
@@ -26,6 +28,10 @@ class HasCoreV1(Protocol):
 
 class HasAppsV1(Protocol):
     apps_v1: AppsV1Api | Any | None
+
+
+class HasCoreAndAppsV1(HasCoreV1, HasAppsV1, Protocol):
+    pass
 
 
 async def list_pods(kube_client: HasCoreV1, namespace: str) -> list[PodSummary]:
@@ -191,6 +197,51 @@ async def list_statefulsets(kube_client: HasAppsV1, namespace: str) -> list[Stat
     statefulset_list = await kube_client.apps_v1.list_namespaced_stateful_set(namespace)
     current = datetime.now(UTC)
     return [statefulset_summary_from_api_item(item, now=current) for item in statefulset_list.items]
+
+
+async def _read_workload(
+    kube_client: HasAppsV1, namespace: str, kind: str, name: str
+) -> Any:
+    if kube_client.apps_v1 is None:
+        raise RuntimeError("Kubernetes client is not connected")
+
+    if kind == "deployment":
+        return await kube_client.apps_v1.read_namespaced_deployment(name, namespace)
+    if kind == "statefulset":
+        return await kube_client.apps_v1.read_namespaced_stateful_set(name, namespace)
+    raise ValueError(f"Unsupported workload kind: {kind}")
+
+
+def _extract_match_labels(workload: Any) -> dict[str, str] | None:
+    spec = getattr(workload, "spec", None)
+    if spec is None:
+        return None
+    selector = getattr(spec, "selector", None)
+    if selector is None:
+        return None
+    return getattr(selector, "match_labels", None)
+
+
+async def list_pods_for_workload(
+    kube_client: HasCoreAndAppsV1, namespace: str, kind: str, name: str
+) -> list[str]:
+    if kube_client.apps_v1 is None:
+        raise RuntimeError("Kubernetes client is not connected")
+    if kube_client.core_v1 is None:
+        raise RuntimeError("Kubernetes client is not connected")
+
+    workload = await _read_workload(kube_client, namespace, kind, name)
+    selector_labels = _extract_match_labels(workload)
+    if not selector_labels:
+        return []
+
+    label_selector = ",".join(
+        f"{key}={value}" for key, value in sorted(selector_labels.items())
+    )
+    pod_list = await kube_client.core_v1.list_namespaced_pod(
+        namespace, label_selector=label_selector
+    )
+    return [getattr(pod.metadata, "name", "") for pod in pod_list.items if getattr(pod.metadata, "name", "")]
 
 
 def pod_summary_from_api_item(item: Any, now: datetime | None = None) -> PodSummary:
@@ -679,3 +730,203 @@ def render_secret_details(secret: SecretSummary) -> str:
         f"immutable: {secret.immutable}\n"
         f"age: {secret.age}"
     )
+
+
+async def get_resource_yaml(
+    kube_client: HasCoreAndAppsV1, namespace: str, kind: str, name: str
+) -> str:
+    item = await _read_resource(kube_client, namespace, kind, name)
+    return yaml.dump(item.to_dict(), default_flow_style=False, sort_keys=False)
+
+
+async def _read_resource(
+    kube_client: HasCoreAndAppsV1, namespace: str, kind: str, name: str
+) -> Any:
+    if kind == "pod":
+        if kube_client.core_v1 is None:
+            raise RuntimeError("Kubernetes client is not connected")
+        return await kube_client.core_v1.read_namespaced_pod(name, namespace)
+    if kind == "deployment":
+        if kube_client.apps_v1 is None:
+            raise RuntimeError("Kubernetes client is not connected")
+        return await kube_client.apps_v1.read_namespaced_deployment(name, namespace)
+    if kind == "statefulset":
+        if kube_client.apps_v1 is None:
+            raise RuntimeError("Kubernetes client is not connected")
+        return await kube_client.apps_v1.read_namespaced_stateful_set(name, namespace)
+    if kind == "service":
+        if kube_client.core_v1 is None:
+            raise RuntimeError("Kubernetes client is not connected")
+        return await kube_client.core_v1.read_namespaced_service(name, namespace)
+    if kind == "pvc":
+        if kube_client.core_v1 is None:
+            raise RuntimeError("Kubernetes client is not connected")
+        return await kube_client.core_v1.read_namespaced_persistent_volume_claim(name, namespace)
+    if kind == "secret":
+        if kube_client.core_v1 is None:
+            raise RuntimeError("Kubernetes client is not connected")
+        return await kube_client.core_v1.read_namespaced_secret(name, namespace)
+    raise ValueError(f"Unsupported resource kind: {kind}")
+
+
+async def read_resource(
+    kube_client: HasCoreAndAppsV1, namespace: str, kind: str, name: str
+) -> Any:
+    return await _read_resource(kube_client, namespace, kind, name)
+
+
+async def get_resource_events(
+    kube_client: HasCoreV1, namespace: str, kind: str, name: str
+) -> list[EventSummary]:
+    if kube_client.core_v1 is None:
+        raise RuntimeError("Kubernetes client is not connected")
+
+    field_selector = f"involvedObject.name={name},involvedObject.kind={kind.capitalize()}"
+    event_list = await kube_client.core_v1.list_namespaced_event(
+        namespace, field_selector=field_selector
+    )
+    current = datetime.now(UTC)
+    return [_event_summary_from_item(item, now=current) for item in event_list.items]
+
+
+async def list_namespace_events(
+    kube_client: HasCoreV1, namespace: str
+) -> list[EventSummary]:
+    if kube_client.core_v1 is None:
+        raise RuntimeError("Kubernetes client is not connected")
+
+    event_list = await kube_client.core_v1.list_namespaced_event(namespace)
+    current = datetime.now(UTC)
+    return [_event_summary_from_item(item, now=current) for item in event_list.items]
+
+
+def _event_summary_from_item(item: Any, now: datetime | None = None) -> EventSummary:
+    metadata = getattr(item, "metadata", None)
+    involved = getattr(item, "involved_object", None)
+    name = getattr(metadata, "name", "-") if metadata is not None else "-"
+    event_type = getattr(item, "type", "") or ""
+    reason = getattr(item, "reason", "") or ""
+    message = getattr(item, "message", "") or ""
+    count = getattr(item, "count", 0) or 0
+    creation = getattr(metadata, "creation_timestamp", None) if metadata is not None else None
+    age = format_age(creation, now)
+    object_kind = getattr(involved, "kind", "") or "" if involved is not None else ""
+    object_name = getattr(involved, "name", "") or "" if involved is not None else ""
+    return EventSummary(
+        name=name,
+        type=event_type,
+        reason=reason,
+        message=message,
+        age=age,
+        object_kind=object_kind,
+        object_name=object_name,
+        count=count,
+    )
+
+
+def render_event_details(event: EventSummary) -> str:
+    return (
+        "event\n"
+        f"name: {event.name}\n"
+        f"type: {event.type}\n"
+        f"reason: {event.reason}\n"
+        f"object: {event.object_kind}/{event.object_name}\n"
+        f"count: {event.count}\n"
+        f"age: {event.age}\n"
+        f"message: {event.message}"
+    )
+
+
+def render_describe_text(item: Any) -> str:
+    lines: list[str] = []
+    metadata = getattr(item, "metadata", None)
+    if metadata is not None:
+        name = getattr(metadata, "name", "-")
+        namespace = getattr(metadata, "namespace", "-")
+        creation = getattr(metadata, "creation_timestamp", None)
+        age = format_age(creation, datetime.now(UTC))
+        labels = getattr(metadata, "labels", {}) or {}
+        annotations = getattr(metadata, "annotations", {}) or {}
+
+        lines.append(f"Name: {name}")
+        lines.append(f"Namespace: {namespace}")
+        lines.append(f"Age: {age}")
+        if labels:
+            lines.append("Labels:")
+            for k, v in sorted(labels.items()):
+                lines.append(f"  {k}={v}")
+        if annotations:
+            lines.append("Annotations:")
+            for k, v in sorted(annotations.items()):
+                val = f"{v[:60]}..." if len(v) > 60 else v
+                lines.append(f"  {k}={val}")
+
+    spec = getattr(item, "spec", None)
+    if spec is not None:
+        replicas = getattr(spec, "replicas", None)
+        if replicas is not None:
+            lines.append(f"Replicas: {replicas}")
+
+        containers = getattr(spec, "containers", []) or []
+        if containers:
+            lines.append("Containers:")
+            for c in containers:
+                cname = getattr(c, "name", "-")
+                image = getattr(c, "image", "-")
+                lines.append(f"  {cname}:")
+                lines.append(f"    Image: {image}")
+                resources = getattr(c, "resources", None)
+                if resources is not None:
+                    requests = getattr(resources, "requests", {}) or {}
+                    limits = getattr(resources, "limits", {}) or {}
+                    if requests:
+                        req_str = ", ".join(f"{k}={v}" for k, v in sorted(requests.items()))
+                        lines.append(f"    Requests: {req_str}")
+                    if limits:
+                        lim_str = ", ".join(f"{k}={v}" for k, v in sorted(limits.items()))
+                        lines.append(f"    Limits: {lim_str}")
+                ports = getattr(c, "ports", []) or []
+                if ports:
+                    ports_str = ", ".join(
+                        str(getattr(p, "container_port", "?")) for p in ports
+                    )
+                    lines.append(f"    Ports: {ports_str}")
+
+            volumes = getattr(spec, "volumes", []) or []
+            if volumes:
+                lines.append("Volumes:")
+                for v in volumes:
+                    vname = getattr(v, "name", "-")
+                    lines.append(f"  {vname}")
+
+        selector = getattr(spec, "selector", None)
+        if selector is not None:
+            match_labels = getattr(selector, "match_labels", None) or {}
+            if match_labels:
+                sel_str = ", ".join(f"{k}={v}" for k, v in sorted(match_labels.items()))
+                lines.append(f"Selector: {sel_str}")
+
+    status = getattr(item, "status", None)
+    if status is not None:
+        phase = getattr(status, "phase", None)
+        if phase:
+            lines.append(f"Phase: {phase}")
+        pod_ip = getattr(status, "pod_ip", None)
+        if pod_ip:
+            lines.append(f"Pod IP: {pod_ip}")
+        available_replicas = getattr(status, "available_replicas", None)
+        if available_replicas is not None:
+            lines.append(f"Available Replicas: {available_replicas}")
+        ready_replicas = getattr(status, "ready_replicas", None)
+        if ready_replicas is not None:
+            lines.append(f"Ready Replicas: {ready_replicas}")
+
+        conditions = getattr(status, "conditions", []) or []
+        if conditions:
+            lines.append("Conditions:")
+            for cond in conditions:
+                ctype = getattr(cond, "type", "-")
+                cstatus = getattr(cond, "status", "-")
+                lines.append(f"  {ctype}: {cstatus}")
+
+    return "\n".join(lines)

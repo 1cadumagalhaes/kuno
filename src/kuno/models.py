@@ -45,6 +45,21 @@ class ExplorerView(StrEnum):
 
 
 @dataclass(slots=True)
+class PodSource:
+    pod_name: str
+    container_name: str | None = None
+    all_containers: list[str] | None = None
+
+
+@dataclass(slots=True)
+class WorkloadSource:
+    kind: str
+    name: str
+    pod_names: list[str]
+    namespace: str
+
+
+@dataclass(slots=True)
 class ContextSummary:
     name: str
     cluster: str
@@ -113,3 +128,15 @@ class SecretSummary:
     data_items: int
     immutable: str
     age: str
+
+
+@dataclass(slots=True)
+class EventSummary:
+    name: str
+    type: str
+    reason: str
+    message: str
+    age: str
+    object_kind: str
+    object_name: str
+    count: int
