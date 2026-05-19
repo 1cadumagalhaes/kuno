@@ -17,6 +17,7 @@ class KunoConfig:
     yaml_theme: str = "monokai"
     wrap_logs: bool = False
     timestamps_enabled: bool = False
+    log_mode: str = "raw"
     tail_lines: int = 500
     default_context: str | None = None
     default_namespace: str | None = None
@@ -43,6 +44,7 @@ def load_config(path: Path | None = None) -> KunoConfig:
         yaml_theme=_safe_str(ui, "yaml_theme", "monokai"),
         wrap_logs=_safe_bool(logs, "wrap", False),
         timestamps_enabled=_safe_bool(logs, "timestamps", False),
+        log_mode=_safe_str(logs, "mode", "raw"),
         tail_lines=_safe_int(logs, "tail_lines", 500),
         default_context=_safe_optional_str(defaults, "context"),
         default_namespace=_safe_optional_str(defaults, "namespace"),
@@ -100,6 +102,7 @@ def _format_config(config: KunoConfig) -> str:
         "[logs]\n"
         f"wrap = {str(config.wrap_logs).lower()}\n"
         f"timestamps = {str(config.timestamps_enabled).lower()}\n"
+        f"mode = \"{config.log_mode}\"\n"
         f"tail_lines = {config.tail_lines}\n"
         "\n"
         "[defaults]\n"
