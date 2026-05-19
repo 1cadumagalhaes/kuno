@@ -1188,7 +1188,11 @@ class KunoApp(App[None]):
         ("ctrl+d", "describe_selected", "Describe"),
         ("d", "toggle_details", "Details"),
         ("e", "events_selected", "Events"),
-        ("l", "open_logs", "Logs"),
+        ("ctrl+l", "open_logs", "Logs"),
+        ("j", "next_row", "Down"),
+        ("k", "previous_row", "Up"),
+        ("g", "jump_top", "Top"),
+        ("G", "jump_bottom", "Bottom"),
         ("colon", "open_command_bar", "Command"),
         ("escape", "close_command_bar", "Close"),
         ("r", "refresh_pods", "Refresh"),
@@ -1792,8 +1796,12 @@ class KunoApp(App[None]):
                 self._command_containers()
             case "contexts":
                 self._command_contexts()
+            case "config":
+                self._command_config()
             case "del":
                 self._command_delete()
+            case "events":
+                self._command_events()
             case "keys":
                 self._command_keys()
             case "logs":
@@ -1961,6 +1969,23 @@ class KunoApp(App[None]):
     def action_open_logs(self) -> None:
         self._command_logs()
 
+    def action_next_row(self) -> None:
+        table = self.query_one("#pod-table", DataTable)
+        table.move_cursor(row=min(table.cursor_row + 1, table.row_count - 1), animate=False)
+
+    def action_previous_row(self) -> None:
+        table = self.query_one("#pod-table", DataTable)
+        table.move_cursor(row=max(table.cursor_row - 1, 0), animate=False)
+
+    def action_jump_top(self) -> None:
+        table = self.query_one("#pod-table", DataTable)
+        table.move_cursor(row=0, animate=False)
+
+    def action_jump_bottom(self) -> None:
+        table = self.query_one("#pod-table", DataTable)
+        if table.row_count > 0:
+            table.move_cursor(row=table.row_count - 1, animate=False)
+
     def action_describe_selected(self) -> None:
         self._command_describe()
 
@@ -2031,6 +2056,14 @@ class KunoApp(App[None]):
                 yaml_content=yaml_content,
                 resource_name=f"{kind}/{name}",
                 yaml_theme=self.kuno_config.yaml_theme,
+            )
+        )
+
+    def _command_config(self) -> None:
+        self.push_screen(
+            ConfigScreen(
+                kuno_config=self.kuno_config,
+                app_themes=sorted(self.available_themes),
             )
         )
 
