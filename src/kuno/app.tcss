@@ -3,15 +3,28 @@ Screen {
 }
 
 #summary-bar {
+    border: round $accent;
+    border-title-color: $accent;
     height: auto;
     margin: 1 1 0 1;
+    padding: 0 1;
 }
 
-#startup-summary {
-    border: round $accent;
+#summary-context {
     height: auto;
+    margin-right: 2;
+    width: auto;
+}
+
+#summary-namespace {
+    height: auto;
+    width: auto;
+}
+
+#breadcrumb {
+    height: auto;
+    margin: 0 1;
     padding: 0 1;
-    width: 1fr;
 }
 
 #back-button {
@@ -39,8 +52,8 @@ Screen {
 }
 
 .panel-title {
-    background: $accent;
-    color: $text;
+    background: $primary;
+    color: $background;
     padding: 0 1;
     text-style: bold;
 }
@@ -66,9 +79,7 @@ Screen {
 }
 
 #command-prefix {
-    background: $accent;
     border: round $accent;
-    color: $text;
     content-align: center middle;
     height: 3;
     min-width: 3;
@@ -83,9 +94,7 @@ Screen {
 }
 
 #command-suggestions {
-    background: $surface;
     border: round $accent;
-    color: $text;
     display: none;
     height: auto;
     margin-top: 1;

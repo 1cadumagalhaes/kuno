@@ -936,16 +936,29 @@ class DescribeScreen(Screen[None]):
         self.query_one("#describe-panel").focus()
 
     def _render_content(self, highlight_line: int | None = None) -> None:
-        if highlight_line is None:
-            self.query_one("#describe-content", Static).update(self.describe_text)
-            return
-        text = Text()
-        for i, ln in enumerate(self._lines):
-            if i == highlight_line:
-                text.append(ln + "\n", style="bold reverse")
-            else:
-                text.append(ln + "\n")
+        text = self._highlighted_describe_text()
+        if highlight_line is not None:
+            line_start = sum(len(self._lines[i]) + 1 for i in range(highlight_line))
+            line_len = len(self._lines[highlight_line])
+            text.stylize("bold reverse", line_start, line_start + line_len)
         self.query_one("#describe-content", Static).update(text)
+
+    def _highlighted_describe_text(self) -> Text:
+        text = Text()
+        for ln in self._lines:
+            if not ln.strip():
+                text.append("\n")
+            elif ":" not in ln:
+                text.append(ln + "\n", style="bold $accent")
+            else:
+                indent = len(ln) - len(ln.lstrip())
+                colon = ln.index(":")
+                key = ln[:colon + 1]
+                value = ln[colon + 1:]
+                text.append(" " * indent)
+                text.append(key.lstrip(), style="bold $primary")
+                text.append(value + "\n", style="$foreground")
+        return text
 
     def _update_match_status(self) -> None:
         status = self.query_one("#describe-match-status", Static)
@@ -1324,8 +1337,10 @@ class KunoApp(App[None]):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="summary-bar"):
-            yield Static(self._summary_text(), id="startup-summary")
+            yield Static("", id="summary-context")
+            yield Static("", id="summary-namespace")
             yield Button("Back", id="back-button")
+        yield Static("", id="breadcrumb")
         with Horizontal(id="explorer"):
             with Vertical(id="pod-panel"):
                 yield Static(self._panel_title(), id="table-title", classes="panel-title")
@@ -1347,7 +1362,8 @@ class KunoApp(App[None]):
         self._dblog(f"theme set to {self.theme}")
         command_area = self.query_one("#command-area", Vertical)
         details_panel = self.query_one("#details-panel", Vertical)
-        summary = self.query_one("#startup-summary", Static)
+        summary_bar = self.query_one("#summary-bar", Horizontal)
+        summary_bar.border_title = "kuno"
         pod_table = self.query_one("#pod-table", DataTable)
         pod_details = self.query_one("#pod-details", Static)
         command_area.display = self.command_bar_visible
@@ -1364,11 +1380,12 @@ class KunoApp(App[None]):
             self._dblog(f"resolved_startup={self.resolved_startup_config}")
         except UnknownContextError as error:
             self._dblog(f"UnknownContextError: {error}")
-            summary.update(f"kuno\nerror: {error}")
+            self.query_one("#summary-context", Static).update(f"error: {error}")
             pod_details.update("pod\n(startup failed)")
             return
 
-        summary.update(self._summary_text())
+        self._update_summary_bar()
+        self._update_breadcrumb()
         self._dblog("calling refresh_current_view")
         self.refresh_current_view()
         self._dblog("on_mount done")
@@ -1555,6 +1572,8 @@ class KunoApp(App[None]):
         pod_table = self.query_one("#pod-table", DataTable)
         self.query_one("#table-title", Static).update(self._panel_title())
         self.query_one("#details-title", Static).update(self._details_title())
+        self._update_summary_bar()
+        self._update_breadcrumb()
         self._configure_table_columns()
         pod_table.clear()
         if self.current_view is ExplorerView.PODS:
@@ -2402,7 +2421,8 @@ class KunoApp(App[None]):
     def _command_namespace(self, namespace: str) -> None:
         current = self._require_target()
         self.resolved_startup_config = StartupConfig(context=current.context, namespace=namespace)
-        self.query_one("#startup-summary", Static).update(self._summary_text())
+        self._update_summary_bar()
+        self._update_breadcrumb()
         self.refresh_current_view()
         self.notify(f"Switched namespace to {namespace}")
 
@@ -2411,7 +2431,8 @@ class KunoApp(App[None]):
         self.resolved_startup_config = load_startup_targets(
             StartupConfig(context=context, namespace=current.namespace)
         )
-        self.query_one("#startup-summary", Static).update(self._summary_text())
+        self._update_summary_bar()
+        self._update_breadcrumb()
         self.refresh_current_view()
         self.notify(f"Switched context to {self.resolved_startup_config.context}")
 
@@ -2692,8 +2713,27 @@ class KunoApp(App[None]):
             return "service"
         return "statefulset"
 
-    def _summary_text(self) -> str:
+    def _update_summary_bar(self) -> None:
         startup_config = self.resolved_startup_config or self.startup_config
         context = startup_config.context or "auto"
         namespace = startup_config.namespace or "auto"
-        return f"kuno\ncontext: {context}\nnamespace: {namespace}"
+        self.query_one("#summary-context", Static).update(f"context  {context}")
+        self.query_one("#summary-namespace", Static).update(f"namespace  {namespace}")
+
+    def _update_breadcrumb(self) -> None:
+        startup_config = self.resolved_startup_config or self.startup_config
+        context = startup_config.context or "auto"
+        namespace = startup_config.namespace or "auto"
+        parts: list[tuple[str, str]] = [
+            (context, "blue"),
+            (namespace, "cyan"),
+            (self.current_view.value, "magenta"),
+        ]
+        if self.current_view is ExplorerView.CONTAINERS and self.container_pod_name:
+            parts.append((self.container_pod_name, "green"))
+        text = Text()
+        for i, (label, color) in enumerate(parts):
+            if i > 0:
+                text.append("  ", style="")
+            text.append(f" {label} ", style=f"bold white on {color}")
+        self.query_one("#breadcrumb", Static).update(text)

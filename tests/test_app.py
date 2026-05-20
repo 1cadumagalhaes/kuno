@@ -1247,11 +1247,13 @@ async def test_app_renders_startup_summary(monkeypatch) -> None:
 
     async with app.run_test() as pilot:
         await pilot.pause()
-        summary = app.query_one("#startup-summary", Static)
+        summary_ctx = app.query_one("#summary-context", Static)
+        summary_ns = app.query_one("#summary-namespace", Static)
         pod_table = app.query_one("#pod-table", DataTable)
         details_panel = app.query_one("#details-panel", Vertical)
         pod_details = app.query_one("#pod-details", Static)
-        assert summary.content == "kuno\ncontext: prod\nnamespace: payments"
+        assert "prod" in str(summary_ctx.content)
+        assert "payments" in str(summary_ns.content)
         assert pod_table.row_count == 1
         assert details_panel.display is False
         assert (
@@ -1270,9 +1272,9 @@ async def test_app_renders_startup_error(monkeypatch) -> None:
     app = KunoApp(StartupConfig(context="prod", namespace="payments"))
 
     async with app.run_test():
-        summary = app.query_one("#startup-summary", Static)
+        summary_ctx = app.query_one("#summary-context", Static)
         pod_details = app.query_one("#pod-details", Static)
-        assert summary.content == "kuno\nerror: missing"
+        assert "error" in str(summary_ctx.content)
         assert pod_details.content == "pod\n(startup failed)"
 
 
@@ -2470,5 +2472,5 @@ async def test_app_executes_namespace_command(monkeypatch) -> None:
         await pilot.pause()
         app.execute_command(":ns billing")
         await pilot.pause()
-        summary = app.query_one("#startup-summary", Static)
-        assert summary.content == "kuno\ncontext: prod\nnamespace: billing"
+        summary_ns = app.query_one("#summary-namespace", Static)
+        assert "billing" in str(summary_ns.content)

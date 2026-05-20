@@ -13,7 +13,7 @@ DEFAULT_CONFIG_PATH = Path.home() / ".config" / "kuno" / "config.toml"
 @dataclass(slots=True)
 class KunoConfig:
     path: Path
-    theme: str = "nord"
+    theme: str = "textual-ansi"
     yaml_theme: str = "monokai"
     wrap_logs: bool = False
     timestamps_enabled: bool = False
