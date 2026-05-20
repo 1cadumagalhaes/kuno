@@ -2,36 +2,42 @@ Screen {
     layout: vertical;
 }
 
-#summary-bar {
-    border: round $accent;
-    border-title-color: $accent;
+#status-line {
+    background: $primary;
+    color: $background;
+    height: 1;
+    padding: 0 1;
+    margin: 0;
+    text-style: bold;
+}
+
+Footer {
+    background: $primary;
+    color: $background;
+}
+
+Footer .footer-key--key {
+    background: $primary;
+    color: $background;
+    text-style: bold;
+}
+
+Footer .footer-key--description {
+    background: $primary;
+    color: $background;
+}
+
+FooterLabel {
+    background: $primary;
+    color: $background;
+}
+
+#breadcrumb {
     height: auto;
     margin: 1 1 0 1;
     padding: 0 1;
 }
 
-#summary-context {
-    height: auto;
-    margin-right: 2;
-    width: auto;
-}
-
-#summary-namespace {
-    height: auto;
-    width: auto;
-}
-
-#breadcrumb {
-    height: auto;
-    margin: 0 1;
-    padding: 0 1;
-}
-
-#back-button {
-    display: none;
-    margin-left: 1;
-    width: auto;
-}
 
 #explorer {
     height: 1fr;
@@ -51,13 +57,6 @@ Screen {
     width: 1fr;
 }
 
-.panel-title {
-    background: $primary;
-    color: $background;
-    padding: 0 1;
-    text-style: bold;
-}
-
 #pod-table {
     height: 1fr;
 }
@@ -65,6 +64,13 @@ Screen {
 #pod-details {
     height: 1fr;
     padding: 1;
+}
+
+.panel-title {
+    background: $primary;
+    color: $background;
+    padding: 0 1;
+    text-style: bold;
 }
 
 #command-area {
@@ -113,13 +119,6 @@ Screen {
 
 LogsScreen {
     layout: vertical;
-}
-
-#logs-title {
-    border: round $accent;
-    height: auto;
-    margin: 1 1 0 1;
-    padding: 0 1;
 }
 
 #logs-controls {
@@ -179,13 +178,6 @@ LogsScreen {
     margin-top: 1;
 }
 
-#manifest-title {
-    border: round $accent;
-    height: auto;
-    margin: 1 1 0 1;
-    padding: 0 1;
-}
-
 #manifest-controls {
     height: 3;
     margin: 1 1 0 1;
@@ -209,13 +201,6 @@ LogsScreen {
     border: round $accent;
     height: 1fr;
     margin: 1;
-    padding: 0 1;
-}
-
-#describe-title {
-    border: round $accent;
-    height: auto;
-    margin: 1 1 0 1;
     padding: 0 1;
 }
 
@@ -262,13 +247,6 @@ LogsScreen {
     padding: 1;
 }
 
-#events-title {
-    border: round $accent;
-    height: auto;
-    margin: 1 1 0 1;
-    padding: 0 1;
-}
-
 #events-controls {
     height: 3;
     margin: 1 1 0 1;
@@ -310,13 +288,6 @@ LogsScreen {
 #events-detail-content {
     height: 1fr;
     padding: 1;
-}
-
-#config-title {
-    border: round $accent;
-    height: auto;
-    margin: 1 1 0 1;
-    padding: 0 1;
 }
 
 #config-panel {

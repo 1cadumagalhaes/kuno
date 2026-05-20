@@ -29,7 +29,7 @@ def test_parse_command_supports_current_command_set(raw: str, expected: ParsedCo
     assert parse_command(raw) == expected
 
 
-@pytest.mark.parametrize("raw", ["", ":", ":unknown", ":ns", ":pods extra"])
+@pytest.mark.parametrize("raw", ["", ":", ":unknown", ":pods extra"])
 def test_parse_command_rejects_invalid_input(raw: str) -> None:
     with pytest.raises(ValueError):
         parse_command(raw)
@@ -76,7 +76,7 @@ def test_parse_command_rejects_invalid_input(raw: str) -> None:
         ("sec", ["secrets"]),
         ("st", ["sts"]),
         ("sv", ["svc"]),
-        ("ns ", ["ns airflow", "ns billing"]),
+        ("ns ", ["ns", "ns airflow", "ns billing"]),
         ("ns bi", ["ns billing"]),
         ("ctx p", ["ctx prod"]),
         ("theme n", ["theme nord"]),

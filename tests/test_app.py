@@ -1,8 +1,15 @@
 import pytest
+from pytest import MonkeyPatch
 from textual.containers import Vertical
-from textual.widgets import Button, DataTable, Input, RichLog, Static
+from textual.widgets import Button, DataTable, Input, Static
 
 from kuno.app import AboutScreen, KunoApp, LogsScreen
+from kuno.log_view import LogView
+
+
+@pytest.fixture(autouse=True)
+def _no_save_config(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr("kuno.app.save_config", lambda config: None)
 from kuno.k8s.config import UnknownContextError
 from kuno.models import (
     ContainerSummary,
@@ -61,10 +68,10 @@ async def test_app_starts_in_pods_view(monkeypatch) -> None:
 
     async with app.run_test() as pilot:
         await pilot.pause()
-        table_title = app.query_one("#table-title", Static)
+        pod_panel = app.query_one("#pod-panel", Vertical)
         pod_table = app.query_one("#pod-table", DataTable)
         assert app.current_view is ExplorerView.PODS
-        assert table_title.content == "Pods"
+        assert pod_panel.border_title == "Pods"
         assert pod_table.row_count == 1
 
 
@@ -117,9 +124,9 @@ async def test_app_selecting_context_opens_namespaces(monkeypatch) -> None:
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
-        table_title = app.query_one("#table-title", Static)
+        pod_panel = app.query_one("#pod-panel", Vertical)
         assert app.current_view is ExplorerView.NAMESPACES
-        assert table_title.content == "Namespaces"
+        assert pod_panel.border_title == "Namespaces"
 
 
 @pytest.mark.asyncio
@@ -188,10 +195,10 @@ async def test_app_selecting_namespace_opens_pods(monkeypatch) -> None:
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
-        table_title = app.query_one("#table-title", Static)
+        pod_panel = app.query_one("#pod-panel", Vertical)
         pod_table = app.query_one("#pod-table", DataTable)
         assert app.current_view is ExplorerView.PODS
-        assert table_title.content == "Pods"
+        assert pod_panel.border_title == "Pods"
         assert pod_table.row_count == 1
 
 
@@ -254,11 +261,11 @@ async def test_app_selecting_pod_opens_containers(monkeypatch) -> None:
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
-        table_title = app.query_one("#table-title", Static)
+        pod_panel = app.query_one("#pod-panel", Vertical)
         pod_table = app.query_one("#pod-table", DataTable)
         assert app.current_view is ExplorerView.CONTAINERS
         assert app.container_pod_name == "api-1"
-        assert table_title.content == "Containers (api-1)"
+        assert pod_panel.border_title == "Containers (api-1)"
         assert pod_table.row_count == 1
 
 
@@ -331,7 +338,6 @@ async def test_app_can_go_back_from_containers_to_pods(monkeypatch) -> None:
         await pilot.press("enter")
         await pilot.pause()
         assert app.current_view is ExplorerView.CONTAINERS
-        assert app.query_one("#back-button", Button).display is True
         app.action_go_back()
         await pilot.pause()
         assert app.current_view is ExplorerView.PODS
@@ -726,10 +732,10 @@ async def test_logs_screen_filters_lines(monkeypatch) -> None:
         await pilot.pause()
         assert isinstance(app.screen, LogsScreen)
         log_filter = app.screen.query_one("#logs-filter", Input)
-        output = app.screen.query_one("#logs-output", RichLog)
+        output = app.screen.query_one("#logs-output", LogView)
         log_filter.value = "error"
         await pilot.pause()
-        assert len(output.lines) == 1
+        assert output.line_count == 1
 
 
 @pytest.mark.asyncio
@@ -929,8 +935,8 @@ async def test_logs_screen_toggles_timestamps_and_wrap(monkeypatch) -> None:
         await pilot.pause()
         assert app.screen.wrap_enabled is True
         assert app.screen.timestamps_enabled is True
-        title = app.screen.query_one("#logs-title", Static)
-        assert "timestamps: on [t]" in str(title.content)
+        logs_output = app.screen.query_one("#logs-output", LogView)
+        assert "Logs —" in str(logs_output.border_title)
 
 
 @pytest.mark.asyncio
@@ -993,14 +999,13 @@ async def test_logs_screen_cycles_modes(monkeypatch) -> None:
         await pilot.pause()
         assert isinstance(app.screen, LogsScreen)
         screen = app.screen
-        title = screen.query_one("#logs-title", Static)
-        assert "mode: raw [m]" in str(title.content)
+        assert screen.mode.value == "raw"
         screen.action_cycle_mode()
         await pilot.pause()
-        assert "mode: structured [m]" in str(title.content)
+        assert screen.mode.value == "structured"
         screen.action_cycle_mode()
         await pilot.pause()
-        assert "mode: raw [m]" in str(title.content)
+        assert screen.mode.value == "raw"
 
 
 @pytest.mark.asyncio
@@ -1132,13 +1137,12 @@ async def test_logs_screen_toggles_line_detail_panel(monkeypatch) -> None:
         await pilot.pause()
         assert isinstance(app.screen, LogsScreen)
         detail_panel = app.screen.query_one("#logs-detail-panel", Vertical)
-        detail_title = app.screen.query_one("#logs-detail-title", Static)
         detail_content = app.screen.query_one("#logs-detail-content", Static)
         assert detail_panel.display is False
         await pilot.press("d")
         await pilot.pause()
         assert detail_panel.display is True
-        assert str(detail_title.content) == "Log Detail (1/1)"
+        assert str(detail_panel.border_title) == "Log Detail (1/1)"
         assert "INFO ready" in str(detail_content.content)
 
 
@@ -1201,7 +1205,7 @@ async def test_logs_screen_supports_mouse_selection(monkeypatch) -> None:
         app.execute_command("logs")
         await pilot.pause()
         assert isinstance(app.screen, LogsScreen)
-        output = app.screen.query_one("#logs-output", RichLog)
+        output = app.screen.query_one("#logs-output", LogView)
         await pilot.click(output, offset=(2, 0))
         await pilot.pause()
         assert app.screen.selected_log_index == 2
@@ -1247,13 +1251,12 @@ async def test_app_renders_startup_summary(monkeypatch) -> None:
 
     async with app.run_test() as pilot:
         await pilot.pause()
-        summary_ctx = app.query_one("#summary-context", Static)
-        summary_ns = app.query_one("#summary-namespace", Static)
+        status_line = app.query_one("#status-line", Static)
         pod_table = app.query_one("#pod-table", DataTable)
         details_panel = app.query_one("#details-panel", Vertical)
         pod_details = app.query_one("#pod-details", Static)
-        assert "prod" in str(summary_ctx.content)
-        assert "payments" in str(summary_ns.content)
+        assert "prod" in str(status_line.content)
+        assert "payments" in str(status_line.content)
         assert pod_table.row_count == 1
         assert details_panel.display is False
         assert (
@@ -1272,9 +1275,9 @@ async def test_app_renders_startup_error(monkeypatch) -> None:
     app = KunoApp(StartupConfig(context="prod", namespace="payments"))
 
     async with app.run_test():
-        summary_ctx = app.query_one("#summary-context", Static)
+        status_line = app.query_one("#status-line", Static)
         pod_details = app.query_one("#pod-details", Static)
-        assert "error" in str(summary_ctx.content)
+        assert "Error:" in str(status_line.content)
         assert pod_details.content == "pod\n(startup failed)"
 
 
@@ -1744,12 +1747,12 @@ async def test_app_switches_to_deployments_view(monkeypatch) -> None:
         await pilot.pause()
         app.execute_command("deploy")
         await pilot.pause()
-        table_title = app.query_one("#table-title", Static)
-        details_title = app.query_one("#details-title", Static)
+        pod_panel = app.query_one("#pod-panel", Vertical)
+        details_panel = app.query_one("#details-panel", Vertical)
         pod_table = app.query_one("#pod-table", DataTable)
         assert app.current_view is ExplorerView.DEPLOYMENTS
-        assert table_title.content == "Deployments"
-        assert details_title.content == "Deployment Details"
+        assert pod_panel.border_title == "Deployments"
+        assert details_panel.border_title == "Deployment Details"
         assert pod_table.row_count == 1
 
 
@@ -1860,12 +1863,12 @@ async def test_app_switches_to_statefulsets_view(monkeypatch) -> None:
         await pilot.pause()
         app.execute_command("sts")
         await pilot.pause()
-        table_title = app.query_one("#table-title", Static)
-        details_title = app.query_one("#details-title", Static)
+        pod_panel = app.query_one("#pod-panel", Vertical)
+        details_panel = app.query_one("#details-panel", Vertical)
         pod_table = app.query_one("#pod-table", DataTable)
         assert app.current_view is ExplorerView.STATEFULSETS
-        assert table_title.content == "StatefulSets"
-        assert details_title.content == "StatefulSet Details"
+        assert pod_panel.border_title == "StatefulSets"
+        assert details_panel.border_title == "StatefulSet Details"
         assert pod_table.row_count == 1
 
 
@@ -1986,12 +1989,12 @@ async def test_app_switches_to_services_view(monkeypatch) -> None:
         await pilot.pause()
         app.execute_command("svc")
         await pilot.pause()
-        table_title = app.query_one("#table-title", Static)
-        details_title = app.query_one("#details-title", Static)
+        pod_panel = app.query_one("#pod-panel", Vertical)
+        details_panel = app.query_one("#details-panel", Vertical)
         pod_table = app.query_one("#pod-table", DataTable)
         assert app.current_view is ExplorerView.SERVICES
-        assert table_title.content == "Services"
-        assert details_title.content == "Service Details"
+        assert pod_panel.border_title == "Services"
+        assert details_panel.border_title == "Service Details"
         assert pod_table.row_count == 1
 
 
@@ -2121,12 +2124,12 @@ async def test_app_switches_to_pvc_view(monkeypatch) -> None:
         await pilot.pause()
         app.execute_command("pvc")
         await pilot.pause()
-        table_title = app.query_one("#table-title", Static)
-        details_title = app.query_one("#details-title", Static)
+        pod_panel = app.query_one("#pod-panel", Vertical)
+        details_panel = app.query_one("#details-panel", Vertical)
         pod_table = app.query_one("#pod-table", DataTable)
         assert app.current_view is ExplorerView.PVC
-        assert table_title.content == "PVC"
-        assert details_title.content == "PVC Details"
+        assert pod_panel.border_title == "PVC"
+        assert details_panel.border_title == "PVC Details"
         assert pod_table.row_count == 1
 
 
@@ -2263,12 +2266,12 @@ async def test_app_switches_to_secrets_view(monkeypatch) -> None:
         await pilot.pause()
         app.execute_command("secrets")
         await pilot.pause()
-        table_title = app.query_one("#table-title", Static)
-        details_title = app.query_one("#details-title", Static)
+        pod_panel = app.query_one("#pod-panel", Vertical)
+        details_panel = app.query_one("#details-panel", Vertical)
         pod_table = app.query_one("#pod-table", DataTable)
         assert app.current_view is ExplorerView.SECRETS
-        assert table_title.content == "Secrets"
-        assert details_title.content == "Secret Details"
+        assert pod_panel.border_title == "Secrets"
+        assert details_panel.border_title == "Secret Details"
         assert pod_table.row_count == 1
 
 
@@ -2426,7 +2429,7 @@ async def test_app_scrolls_command_suggestions(monkeypatch) -> None:
         suggestions = app.query_one("#command-suggestions", Static)
         command_input.value = "ns "
         await pilot.pause()
-        await pilot.press("down", "down", "down", "down")
+        await pilot.press("down", "down", "down", "down", "down")
         await pilot.pause()
         suggestion_text = str(suggestions.content)
         assert "ns payments" in suggestion_text
@@ -2472,5 +2475,5 @@ async def test_app_executes_namespace_command(monkeypatch) -> None:
         await pilot.pause()
         app.execute_command(":ns billing")
         await pilot.pause()
-        summary_ns = app.query_one("#summary-namespace", Static)
-        assert "billing" in str(summary_ns.content)
+        status_line = app.query_one("#status-line", Static)
+        assert "billing" in str(status_line.content)

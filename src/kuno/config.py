@@ -3,7 +3,6 @@ from __future__ import annotations
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from tempfile import NamedTemporaryFile
 
 from kuno.models import StartupConfig
 
@@ -52,17 +51,9 @@ def load_config(path: Path | None = None) -> KunoConfig:
 
 
 def save_config(config: KunoConfig) -> None:
-    config.path.parent.mkdir(parents=True, exist_ok=True)
-    content = _format_config(config)
-    with NamedTemporaryFile(
-        mode="w",
-        dir=config.path.parent,
-        prefix=".kuno_config_",
-        delete=False,
-    ) as tmp:
-        tmp.write(content)
-        tmp_path = Path(tmp.name)
-    tmp_path.rename(config.path)
+    path = config.path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_format_config(config))
 
 
 def merge_startup_config(config: KunoConfig, cli_config: StartupConfig) -> StartupConfig:
@@ -94,18 +85,22 @@ def _safe_optional_str(data: dict, key: str) -> str | None:
 
 
 def _format_config(config: KunoConfig) -> str:
-    return (
-        "[ui]\n"
-        f"theme = \"{config.theme}\"\n"
-        f"yaml_theme = \"{config.yaml_theme}\"\n"
-        "\n"
-        "[logs]\n"
-        f"wrap = {str(config.wrap_logs).lower()}\n"
-        f"timestamps = {str(config.timestamps_enabled).lower()}\n"
-        f"mode = \"{config.log_mode}\"\n"
-        f"tail_lines = {config.tail_lines}\n"
-        "\n"
-        "[defaults]\n"
-        f"# context = \"{config.default_context or ''}\"\n"
-        f"# namespace = \"{config.default_namespace or ''}\"\n"
-    )
+    lines: list[str] = [
+        "[ui]",
+        f"theme = \"{config.theme}\"",
+        f"yaml_theme = \"{config.yaml_theme}\"",
+        "",
+        "[logs]",
+        f"wrap = {str(config.wrap_logs).lower()}",
+        f"timestamps = {str(config.timestamps_enabled).lower()}",
+        f"mode = \"{config.log_mode}\"",
+        f"tail_lines = {config.tail_lines}",
+        "",
+        "[defaults]",
+    ]
+    if config.default_context:
+        lines.append(f"context = \"{config.default_context}\"")
+    if config.default_namespace:
+        lines.append(f"namespace = \"{config.default_namespace}\"")
+    lines.append("")
+    return "\n".join(lines)

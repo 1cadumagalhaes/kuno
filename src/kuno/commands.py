@@ -79,7 +79,12 @@ def parse_command(raw: str) -> ParsedCommand:
     if name == "theme":
         return ParsedCommand(name=name, argument=argument)
 
-    if name in {"ns", "ctx"}:
+    if name == "ns":
+        if argument is None:
+            return ParsedCommand(name=name)
+        return ParsedCommand(name=name, argument=argument)
+
+    if name == "ctx":
         if argument is None:
             raise ValueError(f"Command '{name}' requires an argument")
         return ParsedCommand(name=name, argument=argument)
@@ -148,4 +153,7 @@ def _argument_suggestions(
     else:
         return []
 
-    return [f"{name} {candidate}" for candidate in source if candidate.startswith(argument)]
+    candidates = [f"{name} {c}" for c in source if c.startswith(argument)]
+    if argument == "" and name in ("ns", "ctx"):
+        candidates.insert(0, name)
+    return candidates

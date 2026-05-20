@@ -4,6 +4,7 @@ import re
 import time
 from collections.abc import Iterable
 from contextlib import suppress
+from datetime import datetime
 from typing import ClassVar
 
 from rich.syntax import Syntax
@@ -12,7 +13,7 @@ from textual import events, work
 from textual.app import App, ComposeResult, SystemCommand
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
-from textual.widgets import Button, DataTable, Footer, Input, RichLog, Select, Static, Switch
+from textual.widgets import Button, DataTable, Footer, Input, Select, Static, Switch
 
 from kuno.commands import ParsedCommand, parse_command, suggest_commands
 from kuno.config import DEFAULT_CONFIG_PATH, KunoConfig, save_config
@@ -55,6 +56,7 @@ from kuno.k8s.resources import (
     stream_pod_logs,
     truncate_for_table,
 )
+from kuno.log_view import LogView
 from kuno.logs import LogMode, format_log_line, parse_log_line, rich_log_line
 from kuno.models import (
     ContainerSummary,
@@ -110,6 +112,7 @@ class ConfirmActionScreen(ModalScreen[bool]):
 class LogsScreen(Screen[None]):
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("escape", "close", "Back"),
+        ("backspace", "close", ""),
         ("d", "open_detail", "Detail"),
         ("y", "copy_logs", "Copy"),
         ("f", "toggle_follow", "Follow"),
@@ -185,31 +188,39 @@ class LogsScreen(Screen[None]):
         return None
 
     def compose(self) -> ComposeResult:
-        target = self._display_target()
-        yield Static(
-            self._title_text(target),
-            id="logs-title",
-        )
+        yield Static("", id="status-line")
+        yield Static("", id="breadcrumb")
         with Horizontal(id="logs-controls"):
             yield Input(placeholder="since (e.g. 5m, 1h)", id="logs-since")
             yield Input(placeholder="filter logs", id="logs-filter")
         with Horizontal(id="logs-body"):
-            yield RichLog(id="logs-output", highlight=False, wrap=self.wrap_enabled)
+            yield LogView(id="logs-output", mode=self.mode)
             with Vertical(id="logs-detail-panel"):
-                yield Static("Log Detail", id="logs-detail-title", classes="panel-title")
                 yield Static("(no log selected)", id="logs-detail-content")
-        yield Static("", id="logs-status")
         yield Footer()
 
     def on_mount(self) -> None:
-        output = self.query_one("#logs-output", RichLog)
+        _update_screen_status(self)
+        _update_screen_breadcrumb(
+            self,
+            [
+                ("namespaces", "blue"),
+                ("pods", "green"),
+                (self.pod_name, "magenta"),
+                ("containers", "yellow"),
+                ("logs", "red"),
+            ],
+        )
+        output = self.query_one("#logs-output", LogView)
+        output.border_title = f"Logs — {self._display_target()}"
         output.focus()
+        self.query_one("#logs-detail-panel", Vertical).border_title = "Log Detail"
         self.query_one("#logs-detail-panel", Vertical).display = False
         self.load_logs()
 
     @work(exclusive=True)
     async def load_logs(self) -> None:
-        output = self.query_one("#logs-output", RichLog)
+        output = self.query_one("#logs-output", LogView)
         output.clear()
         self.log_lines = []
 
@@ -222,10 +233,12 @@ class LogsScreen(Screen[None]):
             self.selected_log_index = len(self.log_lines) - 1
         else:
             self.selected_log_index = 0
+        self._trim_log_lines()
         self._render_logs()
+        self._update_status()
 
     async def _load_single_pod_logs(self) -> None:
-        output = self.query_one("#logs-output", RichLog)
+        output = self.query_one("#logs-output", LogView)
         pod_name = self._current_pod_name()
         if pod_name is None:
             return
@@ -236,16 +249,17 @@ class LogsScreen(Screen[None]):
                     self.namespace,
                     pod_name,
                     container_name=self.container_name,
+                    tail_lines=self.kuno_config.tail_lines,
                     since_seconds=parse_since_duration(self.since_text),
                     timestamps=self.timestamps_enabled,
                 )
         except Exception as error:
-            output.write(f"error: {error}")
+            output.append(f"error: {error}")
             return
         self.log_lines = logs.splitlines() if logs else []
 
     async def _load_all_pod_logs(self) -> None:
-        output = self.query_one("#logs-output", RichLog)
+        output = self.query_one("#logs-output", LogView)
         if not isinstance(self.logs_source, WorkloadSource):
             return
         merged: list[str] = []
@@ -261,7 +275,7 @@ class LogsScreen(Screen[None]):
                         timestamps=self.timestamps_enabled,
                     )
             except Exception as error:
-                output.write(f"[{pod_name}] error: {error}")
+                output.append(f"[{pod_name}] error: {error}")
                 continue
             merged.extend(f"[{pod_name}] {line}" for line in logs.splitlines())
         self.log_lines = merged
@@ -279,10 +293,10 @@ class LogsScreen(Screen[None]):
             if self.follow_enabled:
                 self._start_streaming()
         if event.input.id in ("logs-filter", "logs-since"):
-            self.query_one("#logs-output", RichLog).focus()
+            self.query_one("#logs-output", LogView).focus()
 
     def on_click(self, event: events.Click) -> None:
-        output = self.query_one("#logs-output", RichLog)
+        output = self.query_one("#logs-output", LogView)
         offset = event.get_content_offset(output)
         if offset is None:
             return
@@ -314,6 +328,7 @@ class LogsScreen(Screen[None]):
             self._start_streaming()
         else:
             self._stop_streaming()
+        self._update_status()
 
     def action_cycle_mode(self) -> None:
         self.mode = {
@@ -324,6 +339,7 @@ class LogsScreen(Screen[None]):
         save_config(self.kuno_config)
         self._update_title()
         self._render_logs()
+        self._update_status()
 
     def action_toggle_timestamps(self) -> None:
         self.timestamps_enabled = not self.timestamps_enabled
@@ -339,8 +355,10 @@ class LogsScreen(Screen[None]):
         self.kuno_config.wrap_logs = self.wrap_enabled
         save_config(self.kuno_config)
         self._update_title()
-        self.query_one("#logs-output", RichLog).wrap = self.wrap_enabled
-        self._render_logs()
+        log_view = self.query_one("#logs-output", LogView)
+        log_view.wrap = self.wrap_enabled
+        log_view._rebuild_cumulative()
+        self._update_status()
 
     def action_clear_filter(self) -> None:
         log_filter = self.query_one("#logs-filter", Input)
@@ -358,6 +376,7 @@ class LogsScreen(Screen[None]):
             self._stop_streaming()
             self._update_title()
             self._render_logs()
+            self._update_status()
             return
         visible = self._visible_log_indices()
         if not visible:
@@ -367,6 +386,7 @@ class LogsScreen(Screen[None]):
         )
         self.selected_log_index = visible[min(current + 1, len(visible) - 1)]
         self._move_selection(self.selected_log_index)
+        self._update_status()
 
     def action_previous_line(self) -> None:
         if self.follow_enabled:
@@ -374,6 +394,7 @@ class LogsScreen(Screen[None]):
             self._stop_streaming()
             self._update_title()
             self._render_logs()
+            self._update_status()
             return
         visible = self._visible_log_indices()
         if not visible:
@@ -383,23 +404,29 @@ class LogsScreen(Screen[None]):
         )
         self.selected_log_index = visible[max(current - 1, 0)]
         self._move_selection(self.selected_log_index)
+        self._update_status()
 
     def action_jump_top(self) -> None:
         if self.follow_enabled:
             self.follow_enabled = False
             self._stop_streaming()
             self._update_title()
+            self._render_logs()
+            self._update_status()
         visible = self._visible_log_indices()
         if not visible:
             return
         self.selected_log_index = visible[0]
         self._move_selection(self.selected_log_index)
+        self._update_status()
 
     def action_jump_bottom(self) -> None:
         if self.follow_enabled:
             self.follow_enabled = False
             self._stop_streaming()
             self._update_title()
+            self._render_logs()
+            self._update_status()
         visible = self._visible_log_indices()
         if not visible:
             return
@@ -484,89 +511,99 @@ class LogsScreen(Screen[None]):
             self._start_streaming()
 
     def _move_selection(self, new_index: int) -> None:
-        self._render_logs()
+        output = self.query_one("#logs-output", LogView)
+        visible = self._visible_log_indices()
+        if new_index in visible:
+            output.set_selection(visible.index(new_index))
+        self._update_detail_panel()
 
     def _render_logs(self) -> None:
-        output = self.query_one("#logs-output", RichLog)
+        output = self.query_one("#logs-output", LogView)
         output.clear()
         output.auto_scroll = self.follow_enabled
+        output.follow_mode = self.follow_enabled
+        output.mode = self.mode
+        output.selected_index = -1
         self.rendered_log_spans = []
+
         visible = self._visible_log_indices()
-        if visible:
-            if self.follow_enabled:
-                window = visible
-                offset = 0
-            else:
-                WINDOW = 200
-                try:
-                    sel_pos = visible.index(self.selected_log_index)
-                except ValueError:
-                    sel_pos = len(visible) - 1
-                half = WINDOW // 2
-                win_start = max(0, sel_pos - half)
-                win_end = min(len(visible), win_start + WINDOW)
-                win_start = max(0, win_end - WINDOW)
-                window = visible[win_start:win_end]
-                offset = win_start
-            for i, index in enumerate(window):
-                entry = self._entry_renderables(self.log_lines[index], selected=index == self.selected_log_index)
-                start = len(output.lines)
-                for item in entry:
-                    output.write(item)
-                end = len(output.lines) - 1
-                self.rendered_log_spans.append((index, start, end))
+        if not visible and not self.log_lines:
+            output.append("(no logs)")
+        elif not visible:
+            output.append("(no matching log lines)")
+        else:
+            lines_to_show = [self.log_lines[i] for i in visible]
+            output.append_many(lines_to_show)
+            output.scroll_end(animate=False, immediate=True, x_axis=False)
+
+            if self.selected_log_index in visible:
+                output.selected_index = visible.index(self.selected_log_index)
+
             if self.follow_enabled or self.selected_log_index == len(self.log_lines) - 1:
                 output.scroll_end(animate=False, immediate=True, x_axis=False)
-            else:
-                for log_index, start_line, _end_line in self.rendered_log_spans:
-                    if log_index == self.selected_log_index:
-                        self.call_after_refresh(output.scroll_to, y=start_line, animate=False)
-                        break
-        elif self.log_lines:
-            output.write("(no matching log lines)")
-        else:
-            output.write("(no logs)")
         self._update_detail_panel()
+
+    _MAX_LOG_LINES = 100_000
+
+    def _trim_log_lines(self) -> None:
+        if len(self.log_lines) > self._MAX_LOG_LINES:
+            self.log_lines = self.log_lines[-self._MAX_LOG_LINES:]
 
     def _update_status(self) -> None:
         total = len(self.log_lines)
         visible = self._visible_log_indices()
         shown = len(visible)
+
+        status_parts: list[str] = [_format_status_text(self.app)]  # type: ignore[arg-type]
         if self.filter_text:
-            text = f"{shown}/{total} lines  filter: {self.filter_text!r}"
+            status_parts.append(f"filter: {self.filter_text!r}")
         elif shown < total:
-            text = f"showing {shown}/{total} lines"
+            status_parts.append(f"{shown}/{total}")
         else:
-            text = f"{total} lines"
+            status_parts.append(f"{total}")
+
+        flags: list[str] = []
         if self.follow_enabled:
-            text += "  [following]"
-        self.query_one("#logs-status", Static).update(text)
+            flags.append("FOLLOW")
+        if self.wrap_enabled:
+            flags.append("WRAP")
+        if self.timestamps_enabled:
+            flags.append("TS")
+        flags.append(self.mode.value.upper())
+        status_parts.append("[" + "|".join(flags) + "]")
+
+        text = " │ ".join(status_parts)
+        self.query_one("#status-line", Static).update(text)
 
     async def stream_logs_single(self, pod_name: str, container_name: str | None) -> None:
-        output = self.query_one("#logs-output", RichLog)
+        output = self.query_one("#logs-output", LogView)
         prefix = f"[{pod_name}] " if self._is_multi_stream() else ""
         try:
             async with KubeClient(context=self.context) as kube_client:
+                write_count = 0
                 async for line in stream_pod_logs(
                     kube_client,
                     self.namespace,
                     pod_name,
                     container_name=container_name,
-                    since_seconds=parse_since_duration(self.since_text),
+                    since_seconds=parse_since_duration(self.since_text) or 1,
                     timestamps=self.timestamps_enabled,
                 ):
                     prefixed = f"{prefix}{line}"
                     self.log_lines.append(prefixed)
+                    self._trim_log_lines()
                     self.selected_log_index = len(self.log_lines) - 1
                     if self.filter_text and self.filter_text not in prefixed:
                         continue
-                    rendered = self._entry_renderables(prefixed, selected=True)
-                    for item in rendered:
-                        output.write(item)
-                    output.scroll_end(animate=False, immediate=True, x_axis=False)
-                    self._update_status()
+                    output.append(prefixed)
+                    write_count += 1
+                    if write_count % 10 == 0:
+                        output.scroll_end(animate=False, x_axis=False)
+                        self._update_status()
+                output.scroll_end(animate=False, x_axis=False)
+                self._update_status()
         except Exception as error:
-            output.write(f"{prefix}error: {error}")
+            output.append(f"{prefix}error: {error}")
 
     def _start_streaming(self) -> None:
         self._stop_streaming()
@@ -606,37 +643,10 @@ class LogsScreen(Screen[None]):
             return f"{self.logs_source.pod_name}/{self.container_name}"
         return self.logs_source.pod_name
 
-    def _title_text(self, target: str) -> str:
-        follow = "on" if self.follow_enabled else "off"
-        mode = self.mode.value
-        timestamps = "on" if self.timestamps_enabled else "off"
-        wrap = "on" if self.wrap_enabled else "off"
-        if isinstance(self.logs_source, WorkloadSource):
-            focused = getattr(self, "focused_pod", None)
-            replica_info = (
-                f"pod: {focused}"
-                if focused
-                else f"all {len(self.logs_source.pod_names)} pods"
-            )
-            return (
-                "Logs\n"
-                f"context: {self.context}\n"
-                f"namespace: {self.namespace}\n"
-                f"target: {target}\n"
-                f"mode: {mode} [m]  follow: {follow} [f]  timestamps: {timestamps} [t]  wrap: {wrap} [w]\n"
-                f"{replica_info}  since: {self.since_text or 'all'} [s]  filter: /  reload: r  clear filter: ctrl+u  back: esc"
-            )
-        return (
-            "Logs\n"
-            f"context: {self.context}\n"
-            f"namespace: {self.namespace}\n"
-            f"target: {target}\n"
-            f"mode: {mode} [m]  follow: {follow} [f]  timestamps: {timestamps} [t]  wrap: {wrap} [w]\n"
-            f"since: {self.since_text or 'all'} [s]  filter: /  reload: r  clear filter: ctrl+u  back: esc"
-        )
-
     def _update_title(self) -> None:
-        self.query_one("#logs-title", Static).update(self._title_text(self._display_target()))
+        self.query_one("#logs-output", LogView).border_title = (
+            f"Logs — {self._display_target()}"
+        )
 
     def action_close(self) -> None:
         self._stop_streaming()
@@ -654,17 +664,17 @@ class LogsScreen(Screen[None]):
     def _update_detail_panel(self) -> None:
         if not self.details_visible:
             return
-        title = self.query_one("#logs-detail-title", Static)
+        panel = self.query_one("#logs-detail-panel", Vertical)
         detail = self.query_one("#logs-detail-content", Static)
         visible = self._visible_log_indices()
         if not visible:
-            title.update("Log Detail")
+            panel.border_title = "Log Detail"
             detail.update("(no log selected)")
             return
         index = self.selected_log_index if self.selected_log_index in visible else visible[0]
         raw_line = self.log_lines[index]
         parsed = parse_log_line(raw_line)
-        title.update(f"Log Detail ({index + 1}/{len(visible)})")
+        panel.border_title = f"Log Detail ({index + 1}/{len(visible)})"
         timestamp = f"timestamp: {parsed.timestamp}\n\n" if parsed.timestamp else ""
         body = format_log_line(raw_line, LogMode.STRUCTURED)[0]
         detail.update(f"{timestamp}{body}")
@@ -724,7 +734,8 @@ class ManifestScreen(Screen[None]):
         self._search_open: bool = False
 
     def compose(self) -> ComposeResult:
-        yield Static(f"YAML — {self.resource_name}", id="manifest-title")
+        yield Static("", id="status-line")
+        yield Static("", id="breadcrumb")
         with Horizontal(id="manifest-controls"):
             yield Input(placeholder="search  (escape to close)", id="manifest-search")
             yield Static("", id="manifest-match-status")
@@ -733,8 +744,19 @@ class ManifestScreen(Screen[None]):
         yield Footer()
 
     def on_mount(self) -> None:
+        _update_screen_status(self)
+        _update_screen_breadcrumb(
+            self,
+            [
+                ("namespaces", "blue"),
+                ("pods", "green"),
+                (self.resource_name, "magenta"),
+                ("yaml", "red"),
+            ],
+        )
         self._render_yaml()
         self.query_one("#manifest-controls").display = False
+        self.query_one("#manifest-panel").border_title = f"YAML — {self.resource_name}"
         self.query_one("#manifest-panel").focus()
 
     def on_theme_changed(self) -> None:
@@ -909,7 +931,8 @@ class DescribeScreen(Screen[None]):
         self._search_open: bool = False
 
     def compose(self) -> ComposeResult:
-        yield Static(f"Describe — {self.resource_name}", id="describe-title")
+        yield Static("", id="status-line")
+        yield Static("", id="breadcrumb")
         with Horizontal(id="describe-controls"):
             yield Input(placeholder="search  (escape to close)", id="describe-search")
             yield Static("", id="describe-match-status")
@@ -918,11 +941,20 @@ class DescribeScreen(Screen[None]):
                 yield Static("", id="describe-content")
             if self.events:
                 with Vertical(id="describe-events-panel"):
-                    yield Static("Events", id="describe-events-title", classes="panel-title")
                     yield Static("", id="describe-events")
         yield Footer()
 
     def on_mount(self) -> None:
+        _update_screen_status(self)
+        _update_screen_breadcrumb(
+            self,
+            [
+                ("namespaces", "blue"),
+                ("pods", "green"),
+                (self.resource_name, "magenta"),
+                ("describe", "red"),
+            ],
+        )
         self._render_content()
         if self.events:
             lines = [
@@ -932,7 +964,9 @@ class DescribeScreen(Screen[None]):
             self.query_one("#describe-events", Static).update(
                 "\n".join(lines) if lines else "  (none)"
             )
+            self.query_one("#describe-events-panel", Vertical).border_title = "Events"
         self.query_one("#describe-controls").display = False
+        self.query_one("#describe-panel").border_title = f"Describe — {self.resource_name}"
         self.query_one("#describe-panel").focus()
 
     def _render_content(self, highlight_line: int | None = None) -> None:
@@ -949,15 +983,15 @@ class DescribeScreen(Screen[None]):
             if not ln.strip():
                 text.append("\n")
             elif ":" not in ln:
-                text.append(ln + "\n", style="bold $accent")
+                text.append(ln + "\n", style="bold bright_magenta")
             else:
                 indent = len(ln) - len(ln.lstrip())
                 colon = ln.index(":")
                 key = ln[:colon + 1]
                 value = ln[colon + 1:]
                 text.append(" " * indent)
-                text.append(key.lstrip(), style="bold $primary")
-                text.append(value + "\n", style="$foreground")
+                text.append(key.lstrip(), style="bold bright_blue")
+                text.append(value + "\n")
         return text
 
     def _update_match_status(self) -> None:
@@ -1088,21 +1122,25 @@ class EventsScreen(Screen[None]):
         self._search_open: bool = False
 
     def compose(self) -> ComposeResult:
-        yield Static(self.screen_title, id="events-title")
+        yield Static("", id="status-line")
+        yield Static("", id="breadcrumb")
         with Horizontal(id="events-controls"):
             yield Input(placeholder="search  (escape to close)", id="events-search")
             yield Static("", id="events-match-status")
         with Horizontal(id="events-body"):
             yield DataTable(id="events-table")
             with Vertical(id="events-detail-panel"):
-                yield Static("Event Detail", id="events-detail-title", classes="panel-title")
                 yield Static("(no event selected)", id="events-detail-content")
         yield Footer()
 
     def on_mount(self) -> None:
+        _update_screen_status(self)
+        _update_screen_breadcrumb(self, [("namespaces", "blue"), ("events", "red")])
         self._rebuild_table()
         self.query_one("#events-controls").display = False
         self.query_one("#events-detail-panel", Vertical).display = False
+        self.query_one("#events-table").border_title = self.screen_title
+        self.query_one("#events-detail-panel", Vertical).border_title = "Event Detail"
         self.query_one("#events-table").focus()
 
     def _rebuild_table(self) -> None:
@@ -1197,6 +1235,7 @@ class ConfigScreen(Screen[None]):
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("escape", "close", "Back"),
         ("s", "save", "Save"),
+        ("ctrl+s", "save", "Save"),
     ]
 
     def __init__(self, *, kuno_config: KunoConfig, app_themes: list[str]) -> None:
@@ -1205,7 +1244,8 @@ class ConfigScreen(Screen[None]):
         self._app_themes = app_themes
 
     def compose(self) -> ComposeResult:
-        yield Static("Config", id="config-title")
+        yield Static("", id="status-line")
+        yield Static("", id="breadcrumb")
         with VerticalScroll(id="config-panel"):
             with Vertical(id="config-section-ui", classes="config-section"):
                 yield Static("UI", classes="panel-title")
@@ -1247,6 +1287,10 @@ class ConfigScreen(Screen[None]):
                     yield Switch(value=self._config.timestamps_enabled, id="config-timestamps")
         yield Footer()
 
+    def on_mount(self) -> None:
+        _update_screen_status(self)
+        _update_screen_breadcrumb(self, [("config", "red")])
+
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "config-theme" and event.value is not Select.BLANK:
             self.app.theme = str(event.value)
@@ -1272,7 +1316,11 @@ class ConfigScreen(Screen[None]):
         self._config.wrap_logs = wrap_switch.value
         self._config.timestamps_enabled = ts_switch.value
 
-        save_config(self._config)
+        try:
+            save_config(self._config)
+        except Exception as e:
+            self.notify(f"Failed to save config: {e}", severity="error")
+            return
         self.notify("Config saved")
         self.app.pop_screen()
 
@@ -1287,7 +1335,7 @@ class KunoApp(App[None]):
         ("backspace", "go_back", "Back"),
         ("ctrl+d", "describe_selected", "Describe"),
         ("d", "toggle_details", "Details"),
-        ("e", "events_selected", "Events"),
+        ("ctrl+e", "events_selected", "Events"),
         ("ctrl+l", "open_logs", "Logs"),
         ("j", "next_row", "Down"),
         ("k", "previous_row", "Up"),
@@ -1307,12 +1355,11 @@ class KunoApp(App[None]):
         self.command_bar_visible = False
         self.command_suggestions: list[str] = []
         self.command_suggestion_index = 0
-        self.container_pod_name: str | None = None
         self.containers: list[ContainerSummary] = []
         self.contexts: list[ContextSummary] = []
         self.current_view = ExplorerView.PODS
         self.details_visible = False
-        self.navigation_stack: list[tuple[ExplorerView, str | None]] = []
+        self.container_pod_name: str | None = None
         self.namespaces: list[NamespaceSummary] = []
         self.startup_config = startup_config
         self.deployments: list[DeploymentSummary] = []
@@ -1336,17 +1383,12 @@ class KunoApp(App[None]):
             pass
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="summary-bar"):
-            yield Static("", id="summary-context")
-            yield Static("", id="summary-namespace")
-            yield Button("Back", id="back-button")
+        yield Static("", id="status-line")
         yield Static("", id="breadcrumb")
         with Horizontal(id="explorer"):
             with Vertical(id="pod-panel"):
-                yield Static(self._panel_title(), id="table-title", classes="panel-title")
                 yield DataTable(id="pod-table")
             with Vertical(id="details-panel"):
-                yield Static(self._details_title(), id="details-title", classes="panel-title")
                 yield Static(f"{self._view_singular()}\n(loading)", id="pod-details")
         with Vertical(id="command-area"):
             with Horizontal(id="command-bar"):
@@ -1358,16 +1400,15 @@ class KunoApp(App[None]):
     def on_mount(self) -> None:
         self._dblog("on_mount start")
         self.theme = self.kuno_config.theme
-        back_button = self.query_one("#back-button", Button)
         self._dblog(f"theme set to {self.theme}")
         command_area = self.query_one("#command-area", Vertical)
         details_panel = self.query_one("#details-panel", Vertical)
-        summary_bar = self.query_one("#summary-bar", Horizontal)
-        summary_bar.border_title = "kuno"
+        pod_panel = self.query_one("#pod-panel", Vertical)
+        pod_panel.border_title = self._panel_title()
+        details_panel.border_title = self._details_title()
         pod_table = self.query_one("#pod-table", DataTable)
         pod_details = self.query_one("#pod-details", Static)
         command_area.display = self.command_bar_visible
-        back_button.display = False
         details_panel.display = self.details_visible
         pod_table.focus()
         pod_table.cursor_type = "row"
@@ -1380,11 +1421,11 @@ class KunoApp(App[None]):
             self._dblog(f"resolved_startup={self.resolved_startup_config}")
         except UnknownContextError as error:
             self._dblog(f"UnknownContextError: {error}")
-            self.query_one("#summary-context", Static).update(f"error: {error}")
+            self.query_one("#status-line", Static).update(f"Error: {error}")
             pod_details.update("pod\n(startup failed)")
             return
 
-        self._update_summary_bar()
+        self._update_status_line()
         self._update_breadcrumb()
         self._dblog("calling refresh_current_view")
         self.refresh_current_view()
@@ -1552,8 +1593,6 @@ class KunoApp(App[None]):
         if self._pending_single_container_check and self.current_view is ExplorerView.CONTAINERS:
             self._pending_single_container_check = False
             if len(self.containers) == 1:
-                self.navigation_stack.pop()
-                self._update_back_button()
                 target = self._require_target()
                 if target.context and target.namespace:
                     self.push_screen(
@@ -1570,9 +1609,9 @@ class KunoApp(App[None]):
 
     async def _render_pod_table(self) -> None:
         pod_table = self.query_one("#pod-table", DataTable)
-        self.query_one("#table-title", Static).update(self._panel_title())
-        self.query_one("#details-title", Static).update(self._details_title())
-        self._update_summary_bar()
+        self.query_one("#pod-panel", Vertical).border_title = self._panel_title()
+        self.query_one("#details-panel", Vertical).border_title = self._details_title()
+        self._update_status_line()
         self._update_breadcrumb()
         self._configure_table_columns()
         pod_table.clear()
@@ -1763,7 +1802,7 @@ class KunoApp(App[None]):
 
     def get_system_commands(self, screen) -> Iterable[SystemCommand]:
         yield SystemCommand("About", "Show information about kuno", self._command_about)
-        if self.navigation_stack:
+        if self.current_view not in (ExplorerView.NAMESPACES, ExplorerView.CONTEXTS):
             yield SystemCommand("Back", "Return to the previous explorer view", self.action_go_back)
         if screen.query("HelpPanel"):
             yield SystemCommand(
@@ -1947,8 +1986,9 @@ class KunoApp(App[None]):
                 self._command_theme(command.argument)
             case "ns":
                 if command.argument is None:
-                    raise ValueError("Command 'ns' requires an argument")
-                self._command_namespace(command.argument)
+                    self._command_namespaces()
+                else:
+                    self._command_namespace(command.argument)
             case "ctx":
                 if command.argument is None:
                     raise ValueError("Command 'ctx' requires an argument")
@@ -1960,24 +2000,24 @@ class KunoApp(App[None]):
             case _:
                 self.notify(f"Unknown command: {command.name}", severity="error")
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "back-button":
-            self.action_go_back()
-
     def _command_about(self) -> None:
         self.push_screen(AboutScreen())
 
     def action_go_back(self) -> None:
-        if not self.navigation_stack:
+        if self.current_view == ExplorerView.CONTAINERS:
+            self.current_view = ExplorerView.PODS
+            self.container_pod_name = None
+            self.refresh_current_view()
+        elif self.current_view not in (ExplorerView.NAMESPACES, ExplorerView.CONTEXTS):
+            self.current_view = ExplorerView.NAMESPACES
+            self.container_pod_name = None
+            self.refresh_current_view()
+        else:
             self.notify("Already at the top level", severity="warning")
-            return
-        self.current_view, self.container_pod_name = self.navigation_stack.pop()
-        self.refresh_current_view()
-        self._update_back_button()
 
     def _command_pods(self) -> None:
         if self.current_view is not ExplorerView.PODS:
-            self._push_navigation_state()
+            
             self.current_view = ExplorerView.PODS
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
@@ -1985,7 +2025,7 @@ class KunoApp(App[None]):
     def _open_selected_pod(self, index: int) -> None:
         if index < 0 or index >= len(self.pods):
             return
-        self._push_navigation_state()
+        
         self.container_pod_name = self.pods[index].name
         self.current_view = ExplorerView.CONTAINERS
         self._pending_single_container_check = True
@@ -2003,7 +2043,7 @@ class KunoApp(App[None]):
             self.notify("No pod selected", severity="warning")
             return
         if self.current_view is not ExplorerView.CONTAINERS:
-            self._push_navigation_state()
+            
             self.current_view = ExplorerView.CONTAINERS
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
@@ -2012,7 +2052,7 @@ class KunoApp(App[None]):
         if index < 0 or index >= len(self.contexts):
             return
         context = self.contexts[index]
-        self._push_navigation_state()
+        
         self._command_context(context.name)
         self.current_view = ExplorerView.NAMESPACES
         self.refresh_current_view()
@@ -2021,56 +2061,56 @@ class KunoApp(App[None]):
         if index < 0 or index >= len(self.namespaces):
             return
         namespace = self.namespaces[index]
-        self._push_navigation_state()
+        
         self._command_namespace(namespace.name)
         self.current_view = ExplorerView.PODS
         self.refresh_current_view()
 
     def _command_contexts(self) -> None:
         if self.current_view is not ExplorerView.CONTEXTS:
-            self._push_navigation_state()
+            
             self.current_view = ExplorerView.CONTEXTS
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
 
     def _command_deployments(self) -> None:
         if self.current_view is not ExplorerView.DEPLOYMENTS:
-            self._push_navigation_state()
+            
             self.current_view = ExplorerView.DEPLOYMENTS
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
 
     def _command_namespaces(self) -> None:
         if self.current_view is not ExplorerView.NAMESPACES:
-            self._push_navigation_state()
+            
             self.current_view = ExplorerView.NAMESPACES
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
 
     def _command_pvc(self) -> None:
         if self.current_view is not ExplorerView.PVC:
-            self._push_navigation_state()
+            
             self.current_view = ExplorerView.PVC
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
 
     def _command_secrets(self) -> None:
         if self.current_view is not ExplorerView.SECRETS:
-            self._push_navigation_state()
+            
             self.current_view = ExplorerView.SECRETS
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
 
     def _command_services(self) -> None:
         if self.current_view is not ExplorerView.SERVICES:
-            self._push_navigation_state()
+            
             self.current_view = ExplorerView.SERVICES
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
 
     def _command_statefulsets(self) -> None:
         if self.current_view is not ExplorerView.STATEFULSETS:
-            self._push_navigation_state()
+            
             self.current_view = ExplorerView.STATEFULSETS
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
@@ -2421,7 +2461,7 @@ class KunoApp(App[None]):
     def _command_namespace(self, namespace: str) -> None:
         current = self._require_target()
         self.resolved_startup_config = StartupConfig(context=current.context, namespace=namespace)
-        self._update_summary_bar()
+        self._update_status_line()
         self._update_breadcrumb()
         self.refresh_current_view()
         self.notify(f"Switched namespace to {namespace}")
@@ -2431,7 +2471,7 @@ class KunoApp(App[None]):
         self.resolved_startup_config = load_startup_targets(
             StartupConfig(context=context, namespace=current.namespace)
         )
-        self._update_summary_bar()
+        self._update_status_line()
         self._update_breadcrumb()
         self.refresh_current_view()
         self.notify(f"Switched context to {self.resolved_startup_config.context}")
@@ -2517,15 +2557,6 @@ class KunoApp(App[None]):
                 namespace=self._require_target().namespace or "",
             )
         return None
-
-    def _push_navigation_state(self) -> None:
-        state = (self.current_view, self.container_pod_name)
-        if not self.navigation_stack or self.navigation_stack[-1] != state:
-            self.navigation_stack.append(state)
-        self._update_back_button()
-
-    def _update_back_button(self) -> None:
-        self.query_one("#back-button", Button).display = bool(self.navigation_stack)
 
     def _update_command_suggestions(self, raw: str) -> None:
         self.command_suggestions = suggest_commands(
@@ -2713,27 +2744,52 @@ class KunoApp(App[None]):
             return "service"
         return "statefulset"
 
-    def _update_summary_bar(self) -> None:
+    def _update_status_line(self) -> None:
         startup_config = self.resolved_startup_config or self.startup_config
         context = startup_config.context or "auto"
         namespace = startup_config.namespace or "auto"
-        self.query_one("#summary-context", Static).update(f"context  {context}")
-        self.query_one("#summary-namespace", Static).update(f"namespace  {namespace}")
+        now = datetime.now().strftime("%H:%M")
+        text = f"\u2b22 kuno \u2502 ctx: {context} \u2502 ns: {namespace} \u2502 {now}"
+        self.query_one("#status-line", Static).update(text)
 
     def _update_breadcrumb(self) -> None:
-        startup_config = self.resolved_startup_config or self.startup_config
-        context = startup_config.context or "auto"
-        namespace = startup_config.namespace or "auto"
-        parts: list[tuple[str, str]] = [
-            (context, "blue"),
-            (namespace, "cyan"),
-            (self.current_view.value, "magenta"),
-        ]
-        if self.current_view is ExplorerView.CONTAINERS and self.container_pod_name:
-            parts.append((self.container_pod_name, "green"))
+        parts: list[tuple[str, str]] = []
+
+        if self.current_view is ExplorerView.CONTEXTS:
+            parts.append(("contexts", "magenta"))
+        else:
+            parts.append(("namespaces", "magenta" if self.current_view is ExplorerView.NAMESPACES else "cyan"))
+        if self.current_view is ExplorerView.CONTAINERS:
+            parts.append(("pods", "green"))
+            if self.container_pod_name:
+                parts.append((f"containers({self.container_pod_name})", "magenta"))
+        elif self.current_view not in (ExplorerView.CONTEXTS, ExplorerView.NAMESPACES):
+            parts.append((self.current_view.value, "magenta"))
+
         text = Text()
         for i, (label, color) in enumerate(parts):
             if i > 0:
-                text.append("  ", style="")
+                text.append(" > ", style="dim")
             text.append(f" {label} ", style=f"bold white on {color}")
         self.query_one("#breadcrumb", Static).update(text)
+
+
+def _format_status_text(app: KunoApp) -> str:
+    startup_config = app.resolved_startup_config or app.startup_config
+    context = startup_config.context or "auto"
+    namespace = startup_config.namespace or "auto"
+    now = datetime.now().strftime("%H:%M")
+    return f"\u2b22 kuno \u2502 ctx: {context} \u2502 ns: {namespace} \u2502 {now}"
+
+
+def _update_screen_status(screen: Screen) -> None:
+    screen.query_one("#status-line", Static).update(_format_status_text(screen.app))  # type: ignore[arg-type]
+
+
+def _update_screen_breadcrumb(screen: Screen, parts: list[tuple[str, str]]) -> None:
+    text = Text()
+    for i, (label, color) in enumerate(parts):
+        if i > 0:
+            text.append(" > ", style="dim")
+        text.append(f" {label} ", style=f"bold white on {color}")
+    screen.query_one("#breadcrumb", Static).update(text)
