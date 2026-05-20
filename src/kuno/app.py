@@ -1234,6 +1234,10 @@ class ConfigScreen(Screen[None]):
                     yield Switch(value=self._config.timestamps_enabled, id="config-timestamps")
         yield Footer()
 
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id == "config-theme" and event.value is not Select.BLANK:
+            self.app.theme = str(event.value)
+
     def action_save(self) -> None:
         theme_select = self.query_one("#config-theme", Select)
         yaml_theme_select = self.query_one("#config-yaml-theme", Select)
@@ -1754,18 +1758,6 @@ class KunoApp(App[None]):
                 "Show help for the focused widget and a summary of available keys",
                 self.action_show_help_panel,
             )
-        yield SystemCommand(
-            "Theme",
-            "Open the theme selector",
-            self.action_change_theme,
-        )
-        for theme_name in sorted(self.available_themes):
-            yield SystemCommand(
-                f"Use theme {theme_name}",
-                f"Switch to the {theme_name} theme",
-                lambda theme_name=theme_name: self._command_theme(theme_name),
-                discover=False,
-            )
         for context_name in self.available_contexts:
             yield SystemCommand(
                 f"Use context {context_name}",
@@ -1860,6 +1852,27 @@ class KunoApp(App[None]):
                 "Open the details side panel",
                 self._command_show_details,
             )
+        if self._can_inspect_selected():
+            yield SystemCommand(
+                f"Describe {self._view_singular()}",
+                f"Open describe output for the selected {self._view_singular()}",
+                self._command_describe,
+            )
+            yield SystemCommand(
+                "YAML manifest",
+                f"View the raw YAML manifest for the selected {self._view_singular()}",
+                self._command_yaml,
+            )
+        yield SystemCommand(
+            "Events",
+            "View namespace-wide events",
+            self._command_events,
+        )
+        yield SystemCommand(
+            "Config",
+            "Open the configuration screen",
+            self._command_config,
+        )
         yield SystemCommand("Quit", "Quit the application", self.action_quit)
 
     def execute_command(self, raw: str) -> None:
@@ -2437,6 +2450,13 @@ class KunoApp(App[None]):
             ExplorerView.DEPLOYMENTS,
             ExplorerView.STATEFULSETS,
         }
+
+    def _can_inspect_selected(self) -> bool:
+        return (
+            self.current_view
+            not in {ExplorerView.CONTEXTS, ExplorerView.NAMESPACES, ExplorerView.CONTAINERS}
+            and self._selected_resource_name() is not None
+        )
 
     def _selected_logs_source(self) -> PodSource | WorkloadSource | None:
         pod_table = self.query_one("#pod-table", DataTable)

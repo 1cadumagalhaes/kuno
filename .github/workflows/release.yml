@@ -1,0 +1,30 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync
+
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+      - run: uv run pytest
+
+      - run: uv build
+
+      - uses: pypa/gh-action-pypi-publish@release/v1

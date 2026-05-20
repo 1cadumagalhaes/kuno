@@ -2375,7 +2375,8 @@ async def test_app_exposes_clean_system_commands(monkeypatch) -> None:
         titles = [command.title for command in app.get_system_commands(app.screen)]
         assert "About" in titles
         assert "Keys" in titles
-        assert "Theme" in titles
+        assert "Config" in titles
+        assert "Events" in titles
         assert "Use context dev" in titles
         assert "Use namespace airflow" in titles
         assert "Contexts" in titles
