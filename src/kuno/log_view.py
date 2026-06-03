@@ -276,7 +276,7 @@ class LogView(ScrollView, can_focus=True):
         segment = wrapped[seg_idx]
         selection = self.text_selection
         if selection is not None:
-            select_span = selection.get_span(y)
+            select_span = selection.get_span(actual_y)
             if select_span is not None:
                 start, end = select_span
                 if end == -1:

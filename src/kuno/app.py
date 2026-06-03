@@ -1429,6 +1429,7 @@ class KunoApp(App[None]):
         self._update_breadcrumb()
         self._dblog("calling refresh_current_view")
         self.refresh_current_view()
+        self.set_interval(10, self.refresh_current_view)
         self._dblog("on_mount done")
 
     @work(exclusive=True)
