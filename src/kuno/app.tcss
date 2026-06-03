@@ -4,7 +4,7 @@ Screen {
 
 #status-line {
     background: $primary;
-    color: $background;
+    color: $text;
     height: 1;
     padding: 0 1;
     margin: 0;
@@ -12,24 +12,27 @@ Screen {
 }
 
 Footer {
-    background: $primary;
-    color: $background;
+    background: $background;
+    color: $text;
+    text-style: bold;
+    padding: 0 1;
+    height: 1;
 }
 
-Footer .footer-key--key {
-    background: $primary;
-    color: $background;
+FooterKey {
+    background: $background;
+    color: $text;
+    border-left: none;
+}
+
+FooterKey > .footer-key--key {
+    background: $background;
+    color: $text;
     text-style: bold;
 }
 
-Footer .footer-key--description {
-    background: $primary;
-    color: $background;
-}
-
-FooterLabel {
-    background: $primary;
-    color: $background;
+FooterKey > .footer-key--description {
+    color: $text;
 }
 
 #breadcrumb {
@@ -45,14 +48,14 @@ FooterLabel {
 }
 
 #pod-panel {
-    border: round $accent;
+    border: round $primary;
     height: 1fr;
     margin-right: 1;
     width: 2fr;
 }
 
 #details-panel {
-    border: round $accent;
+    border: round $primary;
     height: 1fr;
     width: 1fr;
 }
@@ -68,9 +71,9 @@ FooterLabel {
 
 .panel-title {
     background: $primary;
-    color: $background;
-    padding: 0 1;
+    color: $text;
     text-style: bold;
+    padding: 0 1;
 }
 
 #command-area {
@@ -85,7 +88,7 @@ FooterLabel {
 }
 
 #command-prefix {
-    border: round $accent;
+    border: round $primary;
     content-align: center middle;
     height: 3;
     min-width: 3;
@@ -93,14 +96,14 @@ FooterLabel {
 }
 
 #command-input {
-    border: round $accent;
+    border: round $primary;
     height: 3;
     margin-left: 1;
     width: 1fr;
 }
 
 #command-suggestions {
-    border: round $accent;
+    border: round $primary;
     display: none;
     height: auto;
     margin-top: 1;
@@ -109,8 +112,8 @@ FooterLabel {
 }
 
 #about-panel {
-    background: $panel;
-    border: round $accent;
+    background: $surface;
+    border: round $primary;
     height: auto;
     margin: 8 24;
     padding: 1 2;
@@ -127,20 +130,20 @@ LogsScreen {
 }
 
 #logs-since {
-    border: round $accent;
+    border: round $primary;
     height: 3;
     width: 24;
 }
 
 #logs-filter {
-    border: round $accent;
+    border: round $primary;
     height: 3;
     margin-left: 1;
     width: 1fr;
 }
 
 #logs-output {
-    border: round $accent;
+    border: round $primary;
     height: 1fr;
     margin: 1;
     padding: 0 1;
@@ -148,7 +151,7 @@ LogsScreen {
 }
 
 #logs-detail-panel {
-    border: round $accent;
+    border: round $primary;
     display: none;
     height: 1fr;
     margin: 1 1 1 0;
@@ -161,8 +164,8 @@ LogsScreen {
 }
 
 #confirm-dialog {
-    background: $panel;
-    border: round $accent;
+    background: $surface;
+    border: round $primary;
     height: auto;
     margin: 8 24;
     padding: 1 2;
@@ -184,7 +187,7 @@ LogsScreen {
 }
 
 #manifest-search {
-    border: round $accent;
+    border: round $primary;
     height: 3;
     width: 1fr;
 }
@@ -198,7 +201,7 @@ LogsScreen {
 }
 
 #manifest-panel {
-    border: round $accent;
+    border: round $primary;
     height: 1fr;
     margin: 1;
     padding: 0 1;
@@ -210,7 +213,7 @@ LogsScreen {
 }
 
 #describe-search {
-    border: round $accent;
+    border: round $primary;
     height: 3;
     width: 1fr;
 }
@@ -229,14 +232,14 @@ LogsScreen {
 }
 
 #describe-panel {
-    border: round $accent;
+    border: round $primary;
     height: 1fr;
     padding: 0 1;
     width: 2fr;
 }
 
 #describe-events-panel {
-    border: round $accent;
+    border: round $primary;
     height: 1fr;
     margin-left: 1;
     width: 1fr;
@@ -253,7 +256,7 @@ LogsScreen {
 }
 
 #events-search {
-    border: round $accent;
+    border: round $primary;
     height: 3;
     width: 1fr;
 }
@@ -272,13 +275,13 @@ LogsScreen {
 }
 
 #events-table {
-    border: round $accent;
+    border: round $primary;
     height: 1fr;
     width: 2fr;
 }
 
 #events-detail-panel {
-    border: round $accent;
+    border: round $primary;
     display: none;
     height: 1fr;
     margin-left: 1;
@@ -291,7 +294,7 @@ LogsScreen {
 }
 
 #config-panel {
-    border: round $accent;
+    border: round $primary;
     height: 1fr;
     margin: 1;
     padding: 1;

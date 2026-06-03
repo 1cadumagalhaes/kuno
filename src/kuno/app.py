@@ -58,6 +58,8 @@ from kuno.k8s.resources import (
 )
 from kuno.log_view import LogView
 from kuno.logs import LogMode, format_log_line, parse_log_line, rich_log_line
+from kuno.system_theme import build_system_theme
+from textual.color import Color as TextualColor
 from kuno.models import (
     ContainerSummary,
     ContextSummary,
@@ -1399,6 +1401,7 @@ class KunoApp(App[None]):
 
     def on_mount(self) -> None:
         self._dblog("on_mount start")
+        self.register_theme(build_system_theme())
         self.theme = self.kuno_config.theme
         self._dblog(f"theme set to {self.theme}")
         command_area = self.query_one("#command-area", Vertical)
@@ -2757,22 +2760,27 @@ class KunoApp(App[None]):
         parts: list[tuple[str, str]] = []
 
         if self.current_view is ExplorerView.CONTEXTS:
-            parts.append(("contexts", "magenta"))
+            parts.append(("contexts", "breadcrumb"))
         else:
-            parts.append(("namespaces", "magenta" if self.current_view is ExplorerView.NAMESPACES else "cyan"))
+            parts.append(("namespaces", "breadcrumb-active" if self.current_view is ExplorerView.NAMESPACES else "breadcrumb"))
         if self.current_view is ExplorerView.CONTAINERS:
-            parts.append(("pods", "green"))
+            parts.append(("pods", "breadcrumb"))
             if self.container_pod_name:
-                parts.append((f"containers({self.container_pod_name})", "magenta"))
+                parts.append((f"containers({self.container_pod_name})", "breadcrumb-active"))
         elif self.current_view not in (ExplorerView.CONTEXTS, ExplorerView.NAMESPACES):
-            parts.append((self.current_view.value, "magenta"))
+            parts.append((self.current_view.value, "breadcrumb-active"))
 
+        theme = self.get_theme(self.theme)
         text = Text()
-        for i, (label, color) in enumerate(parts):
+        for i, (label, var_name) in enumerate(parts):
+            bg_color = theme.variables.get(var_name, theme.primary) if theme else "#888888"
+            hex_bg = _rich_color(bg_color)
             if i > 0:
                 text.append(" > ", style="dim")
-            text.append(f" {label} ", style=f"bold white on {color}")
+            text.append(f" {label} ", style=f"bold white on {hex_bg}")
         self.query_one("#breadcrumb", Static).update(text)
+
+    _format_status_line_text = None  # placeholder removed
 
 
 def _format_status_text(app: KunoApp) -> str:
@@ -2787,10 +2795,24 @@ def _update_screen_status(screen: Screen) -> None:
     screen.query_one("#status-line", Static).update(_format_status_text(screen.app))  # type: ignore[arg-type]
 
 
+def _rich_color(name: str) -> str:
+    """Convert a Textual color name to a Rich-compatible hex string."""
+    if name.startswith("#"):
+        return name
+    try:
+        c = TextualColor.parse(name)
+        return f"#{c.r:02x}{c.g:02x}{c.b:02x}"
+    except Exception:
+        return "#888888"
+
+
 def _update_screen_breadcrumb(screen: Screen, parts: list[tuple[str, str]]) -> None:
+    theme = screen.app.get_theme(screen.app.theme)
     text = Text()
-    for i, (label, color) in enumerate(parts):
+    for i, (label, var_name) in enumerate(parts):
+        bg_color = theme.variables.get(var_name, theme.primary) if theme else "#888888"
+        hex_bg = _rich_color(bg_color)
         if i > 0:
             text.append(" > ", style="dim")
-        text.append(f" {label} ", style=f"bold white on {color}")
+        text.append(f" {label} ", style=f"bold white on {hex_bg}")
     screen.query_one("#breadcrumb", Static).update(text)
