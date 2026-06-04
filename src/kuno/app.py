@@ -1660,10 +1660,6 @@ class KunoApp(App[None]):
                     return Text(status, style="bold red")
                 if status in ("Succeeded", "Completed"):
                     return Text(status, style="dim green")
-                if status == "Running":
-                    return Text(status, style="green")
-                if status == "Pending":
-                    return Text(status, style="yellow")
                 return status
 
             def _dim(value, p):
@@ -1757,10 +1753,6 @@ class KunoApp(App[None]):
                     return Text(name, style="bold red")
                 if status in ("Succeeded", "Completed"):
                     return Text(name, style="dim green")
-                if status == "Running":
-                    return Text(name, style="green")
-                if status == "Pending":
-                    return Text(name, style="yellow")
                 return name
             return _pod_name
         if view is ExplorerView.CONTAINERS:
