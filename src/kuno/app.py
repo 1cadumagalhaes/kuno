@@ -1749,6 +1749,20 @@ class KunoApp(App[None]):
 
     def _name_extractor(self):
         view = self.current_view
+        if view is ExplorerView.PODS:
+            def _pod_name(p):
+                name = truncate_for_table(p.name)
+                status = p.status
+                if status in ("Error", "CrashLoopBackOff", "Failed", "Evicted"):
+                    return Text(name, style="bold red")
+                if status in ("Succeeded", "Completed"):
+                    return Text(name, style="dim green")
+                if status == "Running":
+                    return Text(name, style="green")
+                if status == "Pending":
+                    return Text(name, style="yellow")
+                return name
+            return _pod_name
         if view is ExplorerView.CONTAINERS:
             return lambda c: truncate_for_table(c.name)
         return lambda r: truncate_for_table(r.name)

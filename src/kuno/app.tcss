@@ -20,6 +20,7 @@
 }
 
 #pod-panel {
+    background: transparent;
     border: round $primary;
     height: 1fr;
     margin-right: 1;
@@ -27,16 +28,19 @@
 }
 
 #details-panel {
+    background: transparent;
     border: round $primary;
     height: 1fr;
     width: 1fr;
 }
 
 #pod-table {
+    background: transparent;
     height: 1fr;
 }
 
 #pod-details {
+    background: transparent;
     height: 1fr;
     padding: 1;
 }
