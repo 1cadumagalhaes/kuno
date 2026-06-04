@@ -5,7 +5,7 @@ import time
 from collections.abc import Iterable
 from contextlib import suppress
 from datetime import datetime
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from rich.syntax import Syntax
 from rich.text import Text
@@ -2644,30 +2644,49 @@ class KunoApp(App[None]):
         )
         self._render_command_suggestions()
 
+    def _item_by_row_index(self, index: int) -> Any | None:
+        """Look up the data item at a given DataTable row index by key."""
+        pod_table = self.query_one("#pod-table", DataTable)
+        if index < 0 or index >= pod_table.row_count:
+            return None
+        # DataTable stores row keys in a TwoWayDict: index -> RowKey
+        row_key = pod_table._row_locations.get_key(index)
+        if row_key is None:
+            return None
+        key_str = row_key.value  # RowKey has .value attribute
+        rows = self._current_rows()
+        for row in rows:
+            if self._key_fn()(row) == key_str:
+                return row
+        return None
+
     def _update_pod_details(self, index: int | None) -> None:
         pod_details = self.query_one("#pod-details", Static)
-        rows = self._current_rows()
-        if index is None or index < 0 or index >= len(rows):
+        if index is None:
+            pod_details.update(f"{self._view_singular()}\n(no {self._view_singular()} selected)")
+            return
+        item = self._item_by_row_index(index)
+        if item is None:
             pod_details.update(f"{self._view_singular()}\n(no {self._view_singular()} selected)")
             return
         if self.current_view is ExplorerView.PODS:
-            pod_details.update(render_pod_details(self.pods[index]))
+            pod_details.update(render_pod_details(item))  # type: ignore[arg-type]
         elif self.current_view is ExplorerView.CONTAINERS:
-            pod_details.update(render_container_details(self.containers[index]))
+            pod_details.update(render_container_details(item))  # type: ignore[arg-type]
         elif self.current_view is ExplorerView.CONTEXTS:
-            pod_details.update(render_context_details(self.contexts[index]))
+            pod_details.update(render_context_details(item))  # type: ignore[arg-type]
         elif self.current_view is ExplorerView.DEPLOYMENTS:
-            pod_details.update(render_deployment_details(self.deployments[index]))
+            pod_details.update(render_deployment_details(item))  # type: ignore[arg-type]
         elif self.current_view is ExplorerView.NAMESPACES:
-            pod_details.update(render_namespace_details(self.namespaces[index]))
+            pod_details.update(render_namespace_details(item))  # type: ignore[arg-type]
         elif self.current_view is ExplorerView.PVC:
-            pod_details.update(render_pvc_details(self.pvcs[index]))
+            pod_details.update(render_pvc_details(item))  # type: ignore[arg-type]
         elif self.current_view is ExplorerView.SECRETS:
-            pod_details.update(render_secret_details(self.secrets[index]))
+            pod_details.update(render_secret_details(item))  # type: ignore[arg-type]
         elif self.current_view is ExplorerView.SERVICES:
-            pod_details.update(render_service_details(self.services[index]))
+            pod_details.update(render_service_details(item))  # type: ignore[arg-type]
         else:
-            pod_details.update(render_statefulset_details(self.statefulsets[index]))
+            pod_details.update(render_statefulset_details(item))  # type: ignore[arg-type]
 
     def _configure_table_columns(self) -> None:
         pod_table = self.query_one("#pod-table", DataTable)
