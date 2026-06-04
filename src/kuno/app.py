@@ -60,6 +60,7 @@ from kuno.k8s.resources import (
 from kuno.log_view import LogView
 from kuno.logs import LogMode, format_log_line, parse_log_line, rich_log_line
 from kuno.system_theme import Palette, build_system_theme
+from kuno.table_sync import ColumnDef, TableSync
 from textual.color import Color as TextualColor
 from kuno.models import (
     ContainerSummary,
@@ -1372,6 +1373,10 @@ class KunoApp(App[None]):
         self.resolved_startup_config: StartupConfig | None = None
         self._pending_single_container_check = False
         self.debug_enabled = False
+        # Smart table refresh state
+        self._table_sync: TableSync | None = None
+        self._pending_actions: dict[str, str] = {}
+        self._last_table_view: ExplorerView | None = None
 
     def _dblog(self, msg: str) -> None:
         if not self.debug_enabled:
@@ -1621,128 +1626,130 @@ class KunoApp(App[None]):
         self.query_one("#details-panel", Vertical).border_title = self._details_title()
         self._update_status_line()
         self._update_breadcrumb()
-        self._configure_table_columns()
-        # Preserve cursor position across refresh
+
+        view_changed = self._last_table_view != self.current_view
+        if view_changed or self._table_sync is None:
+            self._configure_table_columns()
+            self._table_sync = TableSync(pod_table)
+            self._table_sync.setup_columns(
+                name_width=56,
+                columns=self._column_defs(),
+                name_extractor=self._name_extractor(),
+            )
+            self._last_table_view = self.current_view
+            self._pending_actions.clear()
+
+        rows = self._current_rows()
+        removed_key = self._table_sync.sync(
+            rows,
+            key_fn=self._key_fn(),
+            pending=set(self._pending_actions.keys()),
+        )
+        if removed_key is not None and removed_key in self._pending_actions:
+            del self._pending_actions[removed_key]
         cursor_row = pod_table.cursor_row
-        pod_table.clear()
-        if self.current_view is ExplorerView.PODS:
-            for pod in self.pods:
-                pod_table.add_row(
-                    truncate_for_table(pod.name),
-                    pod.ready,
-                    pod.status,
-                    str(pod.restarts),
-                    pod.age,
-                    pod.cpu,
-                    pod.memory,
-                    pod.containers,
-                    key=pod.name,
-                )
-        elif self.current_view is ExplorerView.CONTAINERS:
-            for container in self.containers:
-                pod_table.add_row(
-                    truncate_for_table(container.name),
-                    container.ready,
-                    container.state,
-                    str(container.restarts),
-                    truncate_for_table(container.image, max_length=40),
-                    container.cpu,
-                    container.memory,
-                    key=f"{container.pod}:{container.name}",
-                )
-        elif self.current_view is ExplorerView.CONTEXTS:
-            for context in self.contexts:
-                pod_table.add_row(
-                    truncate_for_table(context.name),
-                    context.cluster,
-                    context.user,
-                    context.namespace,
-                    context.current,
-                    key=context.name,
-                )
-        elif self.current_view is ExplorerView.DEPLOYMENTS:
-            for deployment in self.deployments:
-                pod_table.add_row(
-                    truncate_for_table(deployment.name),
-                    deployment.ready,
-                    str(deployment.up_to_date),
-                    str(deployment.available),
-                    deployment.age,
-                    deployment.cpu,
-                    deployment.memory,
-                    deployment.containers,
-                    key=deployment.name,
-                )
-        elif self.current_view is ExplorerView.SERVICES:
-            for service in self.services:
-                pod_table.add_row(
-                    truncate_for_table(service.name),
-                    service.type,
-                    service.cluster_ip,
-                    service.ports,
-                    service.age,
-                    service.selector,
-                    key=service.name,
-                )
-        elif self.current_view is ExplorerView.PVC:
-            for pvc in self.pvcs:
-                pod_table.add_row(
-                    truncate_for_table(pvc.name),
-                    pvc.status,
-                    pvc.volume,
-                    pvc.capacity,
-                    pvc.access,
-                    pvc.storage_class,
-                    pvc.age,
-                    key=pvc.name,
-                )
-        elif self.current_view is ExplorerView.NAMESPACES:
-            for namespace in self.namespaces:
-                pod_table.add_row(
-                    truncate_for_table(namespace.name),
-                    namespace.status,
-                    namespace.age,
-                    namespace.current,
-                    key=namespace.name,
-                )
-        elif self.current_view is ExplorerView.SECRETS:
-            for secret in self.secrets:
-                pod_table.add_row(
-                    truncate_for_table(secret.name),
-                    secret.type,
-                    str(secret.data_items),
-                    secret.immutable,
-                    secret.age,
-                    key=secret.name,
-                )
-        else:
-            for statefulset in self.statefulsets:
-                pod_table.add_row(
-                    truncate_for_table(statefulset.name),
-                    statefulset.ready,
-                    str(statefulset.updated),
-                    str(statefulset.current),
-                    statefulset.age,
-                    statefulset.cpu,
-                    statefulset.memory,
-                    statefulset.containers,
-                    key=statefulset.name,
-                )
-        # Restore cursor position if valid
-        if cursor_row is not None and pod_table.row_count > 0:
-            new_row = min(cursor_row, pod_table.row_count - 1)
-            pod_table.move_cursor(row=new_row, animate=False)
+        if cursor_row is not None and cursor_row >= pod_table.row_count:
+            pod_table.move_cursor(row=max(pod_table.row_count - 1, 0), animate=False)
+
+    def _column_defs(self) -> list[ColumnDef]:
+        view = self.current_view
+        if view is ExplorerView.PODS:
+            return [
+                ColumnDef("Ready", 6, "ready", lambda p: p.ready),
+                ColumnDef("Status", 10, "status", lambda p: p.status),
+                ColumnDef("Restarts", 8, "restarts", lambda p: str(p.restarts)),
+                ColumnDef("Age", 6, "age", lambda p: p.age),
+                ColumnDef("CPU", 8, "cpu", lambda p: p.cpu),
+                ColumnDef("Memory", 8, "memory", lambda p: p.memory),
+                ColumnDef("Containers", 10, "containers", lambda p: p.containers),
+            ]
+        if view is ExplorerView.CONTAINERS:
+            return [
+                ColumnDef("Ready", 6, "ready", lambda c: c.ready),
+                ColumnDef("State", 10, "state", lambda c: c.state),
+                ColumnDef("Restarts", 8, "restarts", lambda c: str(c.restarts)),
+                ColumnDef("Image", None, "image", lambda c: truncate_for_table(c.image, max_length=40)),
+                ColumnDef("CPU", 8, "cpu", lambda c: c.cpu),
+                ColumnDef("Memory", 8, "memory", lambda c: c.memory),
+            ]
+        if view is ExplorerView.CONTEXTS:
+            return [
+                ColumnDef("Cluster", 20, "cluster", lambda c: c.cluster),
+                ColumnDef("User", 15, "user", lambda c: c.user),
+                ColumnDef("Namespace", 15, "namespace", lambda c: c.namespace),
+                ColumnDef("Current", 8, "current", lambda c: c.current),
+            ]
+        if view is ExplorerView.DEPLOYMENTS:
+            return [
+                ColumnDef("Ready", 8, "ready", lambda d: d.ready),
+                ColumnDef("Up-to-date", 10, "up-to-date", lambda d: str(d.up_to_date)),
+                ColumnDef("Available", 10, "available", lambda d: str(d.available)),
+                ColumnDef("Age", 6, "age", lambda d: d.age),
+                ColumnDef("CPU", 8, "cpu", lambda d: d.cpu),
+                ColumnDef("Memory", 8, "memory", lambda d: d.memory),
+                ColumnDef("Containers", 10, "containers", lambda d: d.containers),
+            ]
+        if view is ExplorerView.SERVICES:
+            return [
+                ColumnDef("Type", 12, "type", lambda s: s.type),
+                ColumnDef("Cluster IP", 15, "cluster_ip", lambda s: s.cluster_ip),
+                ColumnDef("Ports", 20, "ports", lambda s: s.ports),
+                ColumnDef("Age", 6, "age", lambda s: s.age),
+                ColumnDef("Selector", 20, "selector", lambda s: s.selector),
+            ]
+        if view is ExplorerView.PVC:
+            return [
+                ColumnDef("Status", 10, "status", lambda p: p.status),
+                ColumnDef("Volume", 15, "volume", lambda p: p.volume),
+                ColumnDef("Capacity", 10, "capacity", lambda p: p.capacity),
+                ColumnDef("Access", 10, "access", lambda p: p.access),
+                ColumnDef("StorageClass", 15, "storage_class", lambda p: p.storage_class),
+                ColumnDef("Age", 6, "age", lambda p: p.age),
+            ]
+        if view is ExplorerView.NAMESPACES:
+            return [
+                ColumnDef("Status", 10, "status", lambda n: n.status),
+                ColumnDef("Age", 6, "age", lambda n: n.age),
+                ColumnDef("Current", 8, "current", lambda n: n.current),
+            ]
+        if view is ExplorerView.SECRETS:
+            return [
+                ColumnDef("Type", 15, "type", lambda s: s.type),
+                ColumnDef("Data", 6, "data", lambda s: str(s.data_items)),
+                ColumnDef("Immutable", 10, "immutable", lambda s: s.immutable),
+                ColumnDef("Age", 6, "age", lambda s: s.age),
+            ]
+        # STATEFULSETS
+        return [
+            ColumnDef("Ready", 8, "ready", lambda s: s.ready),
+            ColumnDef("Updated", 8, "updated", lambda s: str(s.updated)),
+            ColumnDef("Current", 8, "current", lambda s: str(s.current)),
+            ColumnDef("Age", 6, "age", lambda s: s.age),
+            ColumnDef("CPU", 8, "cpu", lambda s: s.cpu),
+            ColumnDef("Memory", 8, "memory", lambda s: s.memory),
+            ColumnDef("Containers", 10, "containers", lambda s: s.containers),
+        ]
+
+    def _name_extractor(self):
+        view = self.current_view
+        if view is ExplorerView.CONTAINERS:
+            return lambda c: truncate_for_table(c.name)
+        return lambda r: truncate_for_table(r.name)
+
+    def _key_fn(self):
+        view = self.current_view
+        if view is ExplorerView.CONTAINERS:
+            return lambda c: f"{c.pod}:{c.name}"
+        return lambda r: r.name
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if event.data_table.id != "pod-table":
             return
-
         self._update_pod_details(event.cursor_row)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         if event.data_table.id != "pod-table":
             return
-
         if self.current_view is ExplorerView.CONTEXTS:
             self._open_selected_context(event.cursor_row)
         elif self.current_view is ExplorerView.NAMESPACES:
@@ -1756,8 +1763,6 @@ class KunoApp(App[None]):
         details_panel.display = self.details_visible
         if self.details_visible:
             self._update_pod_details(self.query_one("#pod-table", DataTable).cursor_row)
-        else:
-            pass
 
     def action_open_command_bar(self) -> None:
         command_area = self.query_one("#command-area", Vertical)
