@@ -1,16 +1,11 @@
 import pytest
 from pytest import MonkeyPatch
-from textual.containers import Vertical
-from textual.widgets import Button, DataTable, Input, Static
+from textual.containers import Vertical, VerticalScroll
+from textual.widgets import DataTable, Input, Static
 
 from kuno.app import AboutScreen, KunoApp, LogsScreen
-from kuno.log_view import LogView
-
-
-@pytest.fixture(autouse=True)
-def _no_save_config(monkeypatch: MonkeyPatch) -> None:
-    monkeypatch.setattr("kuno.app.save_config", lambda config: None)
 from kuno.k8s.config import UnknownContextError
+from kuno.log_view import LogView
 from kuno.models import (
     ContainerSummary,
     ContextSummary,
@@ -24,6 +19,11 @@ from kuno.models import (
     StartupConfig,
     StatefulSetSummary,
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_save_config(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr("kuno.app.save_config", lambda config: None)
 
 
 @pytest.mark.asyncio
@@ -1253,16 +1253,17 @@ async def test_app_renders_startup_summary(monkeypatch) -> None:
         await pilot.pause()
         status_line = app.query_one("#status-line", Static)
         pod_table = app.query_one("#pod-table", DataTable)
-        details_panel = app.query_one("#details-panel", Vertical)
+        details_panel = app.query_one("#details-panel", VerticalScroll)
         pod_details = app.query_one("#pod-details", Static)
         assert "prod" in str(status_line.content)
         assert "payments" in str(status_line.content)
         assert pod_table.row_count == 1
         assert details_panel.display is False
-        assert (
-            pod_details.content
-            == "pod\nname: api-1\nready: 1/1\nstatus: Running\nrestarts: 2\nage: 5m\ncontainers: api\ncpu: 500m\nmemory: 256Mi"
-        )
+        details = str(pod_details.content)
+        assert "pod/api-1" in details
+        assert "Status\nphase: Running" in details
+        assert "Resources\nCPU" in details
+        assert details.endswith("Containers\n-")
 
 
 @pytest.mark.asyncio
@@ -1367,7 +1368,7 @@ async def test_app_updates_details_for_highlighted_pod(monkeypatch) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         pod_table = app.query_one("#pod-table", DataTable)
-        details_panel = app.query_one("#details-panel", Vertical)
+        details_panel = app.query_one("#details-panel", VerticalScroll)
         pod_details = app.query_one("#pod-details", Static)
         await pilot.press("d")
         await pilot.pause()
@@ -1375,10 +1376,11 @@ async def test_app_updates_details_for_highlighted_pod(monkeypatch) -> None:
         pod_table.focus()
         await pilot.press("down")
         await pilot.pause()
-        assert (
-            pod_details.content
-            == "pod\nname: worker-1\nready: 0/1\nstatus: Pending\nrestarts: 0\nage: 1m\ncontainers: worker,sidecar\ncpu: 250m\nmemory: 128Mi"
-        )
+        details = str(pod_details.content)
+        assert "pod/worker-1" in details
+        assert "Status\nphase: Pending" in details
+        assert "ready: 0/1" in details
+        assert details.endswith("Containers\n-")
 
 
 @pytest.mark.asyncio
@@ -1420,7 +1422,7 @@ async def test_app_toggles_details_panel(monkeypatch) -> None:
 
     async with app.run_test() as pilot:
         await pilot.pause()
-        details_panel = app.query_one("#details-panel", Vertical)
+        details_panel = app.query_one("#details-panel", VerticalScroll)
         assert details_panel.display is False
         await pilot.press("d")
         await pilot.pause()
@@ -1748,7 +1750,7 @@ async def test_app_switches_to_deployments_view(monkeypatch) -> None:
         app.execute_command("deploy")
         await pilot.pause()
         pod_panel = app.query_one("#pod-panel", Vertical)
-        details_panel = app.query_one("#details-panel", Vertical)
+        details_panel = app.query_one("#details-panel", VerticalScroll)
         pod_table = app.query_one("#pod-table", DataTable)
         assert app.current_view is ExplorerView.DEPLOYMENTS
         assert pod_panel.border_title == "Deployments"
@@ -1864,7 +1866,7 @@ async def test_app_switches_to_statefulsets_view(monkeypatch) -> None:
         app.execute_command("sts")
         await pilot.pause()
         pod_panel = app.query_one("#pod-panel", Vertical)
-        details_panel = app.query_one("#details-panel", Vertical)
+        details_panel = app.query_one("#details-panel", VerticalScroll)
         pod_table = app.query_one("#pod-table", DataTable)
         assert app.current_view is ExplorerView.STATEFULSETS
         assert pod_panel.border_title == "StatefulSets"
@@ -1990,7 +1992,7 @@ async def test_app_switches_to_services_view(monkeypatch) -> None:
         app.execute_command("svc")
         await pilot.pause()
         pod_panel = app.query_one("#pod-panel", Vertical)
-        details_panel = app.query_one("#details-panel", Vertical)
+        details_panel = app.query_one("#details-panel", VerticalScroll)
         pod_table = app.query_one("#pod-table", DataTable)
         assert app.current_view is ExplorerView.SERVICES
         assert pod_panel.border_title == "Services"
@@ -2125,7 +2127,7 @@ async def test_app_switches_to_pvc_view(monkeypatch) -> None:
         app.execute_command("pvc")
         await pilot.pause()
         pod_panel = app.query_one("#pod-panel", Vertical)
-        details_panel = app.query_one("#details-panel", Vertical)
+        details_panel = app.query_one("#details-panel", VerticalScroll)
         pod_table = app.query_one("#pod-table", DataTable)
         assert app.current_view is ExplorerView.PVC
         assert pod_panel.border_title == "PVC"
@@ -2267,7 +2269,7 @@ async def test_app_switches_to_secrets_view(monkeypatch) -> None:
         app.execute_command("secrets")
         await pilot.pause()
         pod_panel = app.query_one("#pod-panel", Vertical)
-        details_panel = app.query_one("#details-panel", Vertical)
+        details_panel = app.query_one("#details-panel", VerticalScroll)
         pod_table = app.query_one("#pod-table", DataTable)
         assert app.current_view is ExplorerView.SECRETS
         assert pod_panel.border_title == "Secrets"

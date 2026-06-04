@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Callable, Sequence
+from typing import Any
 
 from rich.text import Text
 from textual.coordinate import Coordinate
@@ -67,7 +68,7 @@ class TableSync:
             try:
                 self.table.remove_row(key)
                 removed_key = key
-            except Exception:
+            except Exception:  # noqa: S110
                 pass
 
         # Add new rows in the order they appear in the input list
@@ -81,14 +82,12 @@ class TableSync:
             try:
                 new_values = self._full_row_values(new_map[key])
                 row_idx = self.table.get_row_index(key)
-            except Exception:
+            except Exception:  # noqa: S112
                 continue
             for col_idx, val in enumerate(new_values, start=0):
                 current = self.table.get_cell_at(Coordinate(row_idx, col_idx))
                 if str(current) != val:
-                    self.table.update_cell_at(
-                        Coordinate(row_idx, col_idx), val
-                    )
+                    self.table.update_cell_at(Coordinate(row_idx, col_idx), val)
 
         # Visual pending state: prepend (deleting) marker on Name cell
         for key in pending & new_keys_set:
@@ -97,10 +96,8 @@ class TableSync:
                 name_val = self.table.get_cell_at(Coordinate(row_idx, 0))
                 plain = str(name_val)
                 if "(deleting)" not in plain:
-                    self.table.update_cell_at(
-                        Coordinate(row_idx, 0), f"{plain} (deleting)"
-                    )
-            except Exception:
+                    self.table.update_cell_at(Coordinate(row_idx, 0), f"{plain} (deleting)")
+            except Exception:  # noqa: S110
                 pass
 
         return removed_key
@@ -110,6 +107,5 @@ class TableSync:
         values: list[str | Text] = []
         if self._name_extractor is not None:
             values.append(self._name_extractor(item))
-        for col in self._col_defs:
-            values.append(col.extractor(item))
+        values.extend(col.extractor(item) for col in self._col_defs)
         return values

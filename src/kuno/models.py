@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 
@@ -18,6 +18,22 @@ class PodSummary:
     containers: str
     cpu: str
     memory: str
+    cpu_usage: str = "-"
+    cpu_requests: str = "-"
+    cpu_limits: str = "-"
+    memory_usage: str = "-"
+    memory_requests: str = "-"
+    memory_limits: str = "-"
+    node: str = "-"
+    pod_ip: str = "-"
+    host_ip: str = "-"
+    qos_class: str = "-"
+    priority: str = "-"
+    created: str = "-"
+    started: str = "-"
+    conditions: tuple[str, ...] = field(default_factory=tuple)
+    owners: tuple[str, ...] = field(default_factory=tuple)
+    container_details: tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(slots=True)

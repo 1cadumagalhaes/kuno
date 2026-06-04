@@ -90,8 +90,27 @@ def test_pod_summary_from_api_item_reads_operational_fields() -> None:
         restarts=3,
         age="822d",
         containers="api,sidecar",
-        cpu="750m",
-        memory="384Mi",
+        cpu="-/750m",
+        memory="-/384Mi",
+        cpu_requests="750m",
+        memory_requests="384Mi",
+        created="2024-01-01T11:55:00+00:00",
+        container_details=(
+            "api",
+            "  state: Unknown",
+            "  ready: false",
+            "  restarts: 0",
+            "  image: -",
+            "  cpu: - / 250m / -",
+            "  memory: - / 128Mi / -",
+            "sidecar",
+            "  state: Unknown",
+            "  ready: false",
+            "  restarts: 0",
+            "  image: -",
+            "  cpu: - / 500m / -",
+            "  memory: - / 256Mi / -",
+        ),
     )
 
 
@@ -111,6 +130,124 @@ def test_pod_summary_from_api_item_defaults_phase() -> None:
         cpu="-",
         memory="-",
     )
+
+
+def test_pod_summary_includes_usage_requests_and_limits() -> None:
+    item = SimpleNamespace(
+        metadata=SimpleNamespace(name="api-1"),
+        status=SimpleNamespace(
+            phase="Running",
+            container_statuses=[SimpleNamespace(name="api", ready=True, restart_count=1)],
+        ),
+        spec=SimpleNamespace(
+            node_name="node-1",
+            containers=[
+                SimpleNamespace(
+                    name="api",
+                    image="ghcr.io/acme/api:v1",
+                    resources=SimpleNamespace(
+                        requests={"cpu": "500m", "memory": "256Mi"},
+                        limits={"cpu": "1", "memory": "1Gi"},
+                    ),
+                )
+            ],
+        ),
+    )
+
+    pod = pod_summary_from_api_item(
+        item,
+        metrics={"api": {"cpu": "42000000n", "memory": "128Mi"}},
+    )
+
+    assert pod.cpu == "42m/500m"
+    assert pod.memory == "128Mi/256Mi"
+    assert pod.cpu_usage == "42m"
+    assert pod.cpu_requests == "500m"
+    assert pod.cpu_limits == "1"
+    assert pod.memory_usage == "128Mi"
+    assert pod.memory_requests == "256Mi"
+    assert pod.memory_limits == "1Gi"
+    assert pod.node == "node-1"
+    assert pod.container_details == (
+        "api",
+        "  state: Unknown",
+        "  ready: true",
+        "  restarts: 1",
+        "  image: ghcr.io/acme/api:v1",
+        "  cpu: 42m / 500m / 1",
+        "  memory: 128Mi / 256Mi / 1Gi",
+    )
+
+
+def test_failed_pod_can_show_running_container_state() -> None:
+    item = SimpleNamespace(
+        metadata=SimpleNamespace(name="job-1"),
+        status=SimpleNamespace(
+            phase="Failed",
+            container_statuses=[
+                SimpleNamespace(
+                    name="base",
+                    ready=False,
+                    restart_count=0,
+                    state=SimpleNamespace(
+                        running=SimpleNamespace(
+                            started_at=datetime(2026, 6, 4, 16, 24, 2, tzinfo=UTC)
+                        ),
+                        waiting=None,
+                        terminated=None,
+                    ),
+                )
+            ],
+        ),
+        spec=SimpleNamespace(containers=[SimpleNamespace(name="base", image="busybox")]),
+    )
+
+    pod = pod_summary_from_api_item(item)
+
+    assert pod.status == "Failed"
+    assert pod.container_details[:4] == (
+        "base",
+        "  state: Running",
+        "  started: 2026-06-04T16:24:02+00:00",
+        "  ready: false",
+    )
+
+
+def test_terminated_container_details_include_reason_and_exit_code() -> None:
+    item = SimpleNamespace(
+        metadata=SimpleNamespace(name="job-1"),
+        status=SimpleNamespace(
+            phase="Failed",
+            container_statuses=[
+                SimpleNamespace(
+                    name="base",
+                    ready=False,
+                    restart_count=0,
+                    state=SimpleNamespace(
+                        running=None,
+                        waiting=None,
+                        terminated=SimpleNamespace(
+                            reason="Error",
+                            exit_code=1,
+                            signal=None,
+                            started_at=datetime(2026, 6, 4, 16, 24, 2, tzinfo=UTC),
+                            finished_at=datetime(2026, 6, 4, 16, 25, 2, tzinfo=UTC),
+                            message="command failed",
+                        ),
+                    ),
+                )
+            ],
+        ),
+        spec=SimpleNamespace(containers=[SimpleNamespace(name="base", image="busybox")]),
+    )
+
+    pod = pod_summary_from_api_item(item)
+
+    assert "  state: Terminated" in pod.container_details
+    assert "  reason: Error" in pod.container_details
+    assert "  exit code: 1" in pod.container_details
+    assert "  finished: 2026-06-04T16:25:02+00:00" in pod.container_details
+    assert "  message: command failed" in pod.container_details
 
 
 def test_container_summary_formats_names() -> None:
@@ -182,20 +319,49 @@ def test_format_memory_requests_sums_container_requests() -> None:
 
 
 def test_render_pod_details_formats_pod() -> None:
-    assert (
-        render_pod_details(
-            PodSummary(
-                name="api-1",
-                ready="1/1",
-                status="Running",
-                restarts=2,
-                age="5m",
-                containers="api,sidecar",
-                cpu="500m",
-                memory="256Mi",
-            )
+    assert render_pod_details(
+        PodSummary(
+            name="api-1",
+            ready="1/1",
+            status="Running",
+            restarts=2,
+            age="5m",
+            containers="api,sidecar",
+            cpu="500m",
+            memory="256Mi",
         )
-        == "pod\nname: api-1\nready: 1/1\nstatus: Running\nrestarts: 2\nage: 5m\ncontainers: api,sidecar\ncpu: 500m\nmemory: 256Mi"
+    ) == "\n".join(
+        [
+            "pod/api-1",
+            "",
+            "Status",
+            "phase: Running",
+            "ready: 1/1",
+            "restarts: 2",
+            "age: 5m",
+            "node: -",
+            "pod ip: -",
+            "host ip: -",
+            "qos: -",
+            "priority: -",
+            "",
+            "Resources",
+            "CPU     use -    req -    lim -",
+            "Memory  use -    req -    lim -",
+            "",
+            "Conditions",
+            "-",
+            "",
+            "Ownership",
+            "-",
+            "",
+            "Timestamps",
+            "started: -",
+            "created: -",
+            "",
+            "Containers",
+            "-",
+        ]
     )
 
 

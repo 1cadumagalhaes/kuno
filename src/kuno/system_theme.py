@@ -3,10 +3,12 @@ from __future__ import annotations
 import math
 import os
 import re
+import select
 import sys
 import termios
 import time
 import tty
+from contextlib import suppress
 from typing import NamedTuple
 
 from textual.theme import Theme
@@ -21,17 +23,24 @@ class Palette(NamedTuple):
 
 
 _OSC_RE = re.compile(r"rgb:([0-9a-fA-F]+)/([0-9a-fA-F]+)/([0-9a-fA-F]+)")
+_HEX_RE = re.compile(r"#([0-9a-fA-F]{12}|[0-9a-fA-F]{9}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3})")
 
 
-def _query_single_osc(fd: int, query: bytes, timeout: float = 0.4) -> bytes | None:
+def _query_single_osc(fd: int, query: bytes, timeout: float = 0.6) -> bytes | None:
     """Send one OSC query and read back the response until terminator."""
     os.write(fd, query)
     data = b""
     end = time.time() + timeout
     while time.time() < end:
+        remaining = end - time.time()
+        if remaining <= 0:
+            break
+        readable, _, _ = select.select([fd], [], [], remaining)
+        if not readable:
+            break
         try:
             chunk = os.read(fd, 1)
-        except (OSError, BlockingIOError):
+        except OSError, BlockingIOError:
             break
         if not chunk:
             break
@@ -45,14 +54,19 @@ def _drain(fd: int, timeout: float = 0.15) -> bytes:
     """Read anything left on the fd after a query (non-blocking)."""
     drained = b""
     end = time.time() + timeout
-    # Best-effort non-blocking read without fcntl (simpler, fewer edge cases)
     while time.time() < end:
+        remaining = end - time.time()
+        if remaining <= 0:
+            break
+        readable, _, _ = select.select([fd], [], [], min(remaining, 0.01))
+        if not readable:
+            break
         try:
             chunk = os.read(fd, 1024)
             if not chunk:
                 break
             drained += chunk
-        except (OSError, BlockingIOError):
+        except OSError, BlockingIOError:
             break
         time.sleep(0.01)
     return drained
@@ -64,24 +78,42 @@ def _parse_osc_reply(data: bytes) -> dict[int, RGB]:
     for part in text.split("\x1b]")[1:]:
         part = part.rstrip("\x07\x1b\\ \t\n\r")
         if part.startswith("10;"):
-            m = _OSC_RE.search(part)
-            if m:
-                result[10] = _osc_hex(m.group(1), m.group(2), m.group(3))
+            color = _parse_color_spec(part.removeprefix("10;"))
+            if color is not None:
+                result[10] = color
         elif part.startswith("11;"):
-            m = _OSC_RE.search(part)
-            if m:
-                result[11] = _osc_hex(m.group(1), m.group(2), m.group(3))
+            color = _parse_color_spec(part.removeprefix("11;"))
+            if color is not None:
+                result[11] = color
         else:
-            m = re.match(r"4;(\d+);rgb:([0-9a-fA-F]+)/([0-9a-fA-F]+)/([0-9a-fA-F]+)", part)
+            m = re.match(r"4;(\d+);(.+)", part)
             if m:
-                result[int(m.group(1))] = _osc_hex(m.group(2), m.group(3), m.group(4))
+                color = _parse_color_spec(m.group(2))
+                if color is not None:
+                    result[int(m.group(1))] = color
     return result
+
+
+def _parse_color_spec(value: str) -> RGB | None:
+    rgb_match = _OSC_RE.search(value)
+    if rgb_match:
+        return _osc_hex(rgb_match.group(1), rgb_match.group(2), rgb_match.group(3))
+
+    hex_match = _HEX_RE.search(value)
+    if hex_match:
+        value = hex_match.group(1)
+        width = len(value) // 3
+        return _osc_hex(value[:width], value[width : width * 2], value[width * 2 :])
+
+    return None
 
 
 def _osc_hex(r: str, g: str, b: str) -> RGB:
     def _norm(s: str) -> int:
         v = int(s, 16)
-        return v if len(s) == 2 else round(v / 65535 * 255)
+        max_value = (16 ** len(s)) - 1
+        return round(v / max_value * 255)
+
     return (_norm(r), _norm(g), _norm(b))
 
 
@@ -95,25 +127,31 @@ def query_terminal_palette() -> Palette | None:
     fd = sys.stdin.fileno()
     try:
         tb = termios.tcgetattr(fd)
-    except (termios.error, OSError):
+    except termios.error, OSError:
         return None
     tty.setraw(fd)
     try:
         # Query foreground and background sequentially (widely supported)
-        fg_data = _query_single_osc(fd, b"\x1b]10;?\x07", 0.4)
+        fg_data = _query_single_osc(fd, b"\x1b]10;?\x1b\\", 0.6)
         _drain(fd)
-        bg_data = _query_single_osc(fd, b"\x1b]11;?\x07", 0.4)
+        bg_data = _query_single_osc(fd, b"\x1b]11;?\x1b\\", 0.6)
         _drain(fd)
 
         # Query ANSI 0-15 — batch is faster, but read response carefully
-        batch = b"".join(f"\x1b]4;{i};?\x07".encode() for i in range(16))
+        batch = b"".join(f"\x1b]4;{i};?\x1b\\".encode() for i in range(16))
         os.write(fd, batch)
         ansi_data = b""
         end = time.time() + 1.2
         while time.time() < end:
+            remaining = end - time.time()
+            if remaining <= 0:
+                break
+            readable, _, _ = select.select([fd], [], [], remaining)
+            if not readable:
+                break
             try:
                 chunk = os.read(fd, 1)
-            except (OSError, BlockingIOError):
+            except OSError, BlockingIOError:
                 break
             if not chunk:
                 break
@@ -124,17 +162,15 @@ def query_terminal_palette() -> Palette | None:
                 continue
         _drain(fd)
     finally:
-        try:
+        with suppress(termios.error, OSError):
             termios.tcsetattr(fd, termios.TCSADRAIN, tb)
-        except (termios.error, OSError):
-            pass
 
-    all_data = b"".join(d for d in (fg_data, bg_data, ansi_data) if d)
-    result = _parse_osc_reply(all_data)
+    dynamic_result = _parse_osc_reply(b"".join(d for d in (fg_data, bg_data) if d))
+    ansi_result = _parse_osc_reply(ansi_data)
 
-    bg = result.get(11)
-    fg = result.get(10)
-    ansi = [result.get(i) for i in range(16)]
+    bg = dynamic_result.get(11)
+    fg = dynamic_result.get(10)
+    ansi = [ansi_result.get(i) for i in range(16)]
 
     # Validate: need at least fg + bg, and fg/bg must be different
     if bg is None or fg is None:
@@ -154,6 +190,7 @@ def _luminance(r: int, g: int, b: int) -> float:
     def lin(c: int) -> float:
         v = c / 255.0
         return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+
     return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
 
 
@@ -255,10 +292,22 @@ def _fallback_palette() -> Palette:
         background=(20, 8, 13),
         foreground=(235, 235, 235),
         ansi=[
-            (39, 24, 30), (199, 80, 106), (139, 196, 160), (196, 168, 130),
-            (122, 142, 196), (168, 123, 181), (123, 181, 168), (209, 198, 203),
-            (81, 70, 74), (224, 112, 136), (160, 212, 176), (212, 184, 146),
-            (138, 158, 212), (186, 139, 197), (139, 197, 184), (235, 235, 235),
+            (39, 24, 30),
+            (199, 80, 106),
+            (139, 196, 160),
+            (196, 168, 130),
+            (122, 142, 196),
+            (168, 123, 181),
+            (123, 181, 168),
+            (209, 198, 203),
+            (81, 70, 74),
+            (224, 112, 136),
+            (160, 212, 176),
+            (212, 184, 146),
+            (138, 158, 212),
+            (186, 139, 197),
+            (139, 197, 184),
+            (235, 235, 235),
         ],
     )
 
@@ -270,7 +319,7 @@ def build_system_theme(palette: Palette | None = None) -> Theme:
     bg = palette.background
     fg = palette.foreground
     ansi = palette.ansi
-    all_colors = ansi + [bg, fg]
+    all_colors = [*ansi, bg, fg]
     grays = _grayscale(bg, all_colors)
 
     acc = _pick_accent(ansi, bg, fg)
@@ -289,10 +338,8 @@ def build_system_theme(palette: Palette | None = None) -> Theme:
                 muted_target = grays[i]
                 break
 
-    # Secondary/tertiary
-    bg_is_warm = bg[0] + bg[1] > bg[2] * 1.5
+    # Secondary
     secondary = ansi[5]  # magenta
-    tertiary = ansi[3] if bg_is_warm else ansi[4]
 
     return Theme(
         name="system",
@@ -329,6 +376,8 @@ def build_system_theme(palette: Palette | None = None) -> Theme:
             "input-cursor-text-style": "reverse",
             "input-selection-background": _rgb_str(acc),
             "breadcrumb": _rgb_str(acc),
-            "breadcrumb-active": _rgb_str(secondary if _contrast_ratio(secondary, surface) >= 2.5 else ansi[3]),
+            "breadcrumb-active": _rgb_str(
+                secondary if _contrast_ratio(secondary, surface) >= 2.5 else ansi[3]
+            ),
         },
     )

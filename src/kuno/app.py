@@ -5,6 +5,7 @@ import time
 from collections.abc import Iterable
 from contextlib import suppress
 from datetime import datetime
+from pathlib import Path
 from typing import Any, ClassVar
 
 from rich.syntax import Syntax
@@ -12,6 +13,7 @@ from rich.text import Text
 from textual import events, work
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
+from textual.color import Color as TextualColor
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, DataTable, Footer, Input, Select, Static, Switch
@@ -59,9 +61,6 @@ from kuno.k8s.resources import (
 )
 from kuno.log_view import LogView
 from kuno.logs import LogMode, format_log_line, parse_log_line, rich_log_line
-from kuno.system_theme import Palette, build_system_theme
-from kuno.table_sync import ColumnDef, TableSync
-from textual.color import Color as TextualColor
 from kuno.models import (
     ContainerSummary,
     ContextSummary,
@@ -78,6 +77,8 @@ from kuno.models import (
     StatefulSetSummary,
     WorkloadSource,
 )
+from kuno.system_theme import Palette, build_system_theme
+from kuno.table_sync import ColumnDef, TableSync
 
 
 class AboutScreen(ModalScreen[None]):
@@ -154,7 +155,11 @@ class LogsScreen(Screen[None]):
         self.filter_text = ""
         self.follow_enabled = True
         self.log_lines: list[str] = []
-        self.mode = LogMode(kuno_config.log_mode) if kuno_config.log_mode in LogMode._value2member_map_ else LogMode.RAW
+        self.mode = (
+            LogMode(kuno_config.log_mode)
+            if kuno_config.log_mode in LogMode._value2member_map_
+            else LogMode.RAW
+        )
         self.namespace = namespace
         self.logs_source = logs_source
         self.pod_name = self._resolve_pod_name()
@@ -188,7 +193,9 @@ class LogsScreen(Screen[None]):
             return self.pod_name
         focused = getattr(self, "focused_pod", None)
         if isinstance(self.logs_source, WorkloadSource):
-            return focused or (self.logs_source.pod_names[0] if self.logs_source.pod_names else None)
+            return focused or (
+                self.logs_source.pod_names[0] if self.logs_source.pod_names else None
+            )
         return None
 
     def compose(self) -> ComposeResult:
@@ -551,7 +558,7 @@ class LogsScreen(Screen[None]):
 
     def _trim_log_lines(self) -> None:
         if len(self.log_lines) > self._MAX_LOG_LINES:
-            self.log_lines = self.log_lines[-self._MAX_LOG_LINES:]
+            self.log_lines = self.log_lines[-self._MAX_LOG_LINES :]
 
     def _update_status(self) -> None:
         total = len(self.log_lines)
@@ -648,9 +655,7 @@ class LogsScreen(Screen[None]):
         return self.logs_source.pod_name
 
     def _update_title(self) -> None:
-        self.query_one("#logs-output", LogView).border_title = (
-            f"Logs — {self._display_target()}"
-        )
+        self.query_one("#logs-output", LogView).border_title = f"Logs — {self._display_target()}"
 
     def action_close(self) -> None:
         self._stop_streaming()
@@ -717,9 +722,7 @@ class ManifestScreen(Screen[None]):
         ("up", "scroll_up", ""),
     ]
 
-    def __init__(
-        self, *, yaml_content: str, resource_name: str
-    ) -> None:
+    def __init__(self, *, yaml_content: str, resource_name: str) -> None:
         super().__init__()
         self.yaml_content = yaml_content
         self.resource_name = resource_name
@@ -727,7 +730,8 @@ class ManifestScreen(Screen[None]):
         self._match_indices: list[int] = []
         self._match_cursor: int = 0
         self._key_lines: list[int] = [
-            i for i, ln in enumerate(self._lines)
+            i
+            for i, ln in enumerate(self._lines)
             if ln.lstrip().lstrip("- ").split(":")[0].strip()
             and ":" in ln
             and not ln.lstrip().startswith("#")
@@ -990,8 +994,8 @@ class DescribeScreen(Screen[None]):
             else:
                 indent = len(ln) - len(ln.lstrip())
                 colon = ln.index(":")
-                key = ln[:colon + 1]
-                value = ln[colon + 1:]
+                key = ln[: colon + 1]
+                value = ln[colon + 1 :]
                 text.append(" " * indent)
                 text.append(key.lstrip(), style="bold bright_blue")
                 text.append(value + "\n")
@@ -1096,7 +1100,9 @@ class DescribeScreen(Screen[None]):
         if self.events:
             full += "\n\nEvents:\n"
             for ev in self.events:
-                full += f"  {ev.age:>10}  {ev.type:>7}  {ev.reason:<20}  {ev.count:>3}  {ev.message}\n"
+                full += (
+                    f"  {ev.age:>10}  {ev.type:>7}  {ev.reason:<20}  {ev.count:>3}  {ev.message}\n"
+                )
         self.app.copy_to_clipboard(full)
         self.notify("Copied description to clipboard")
 
@@ -1172,7 +1178,8 @@ class EventsScreen(Screen[None]):
             self._visible_events = list(self.events)
         else:
             self._visible_events = [
-                ev for ev in self.events
+                ev
+                for ev in self.events
                 if term in ev.type.lower()
                 or term in ev.reason.lower()
                 or term in ev.message.lower()
@@ -1310,10 +1317,8 @@ class ConfigScreen(Screen[None]):
             self._config.theme = "system"
         if log_mode_select.value is not Select.BLANK:
             self._config.log_mode = str(log_mode_select.value)
-        try:
+        with suppress(ValueError):
             self._config.tail_lines = int(tail_input.value)
-        except ValueError:
-            pass
         self._config.wrap_logs = wrap_switch.value
         self._config.timestamps_enabled = ts_switch.value
 
@@ -1349,9 +1354,16 @@ class KunoApp(App[None]):
         ("shift+o", "cycle_sort", "Sort"),
     ]
 
-    def __init__(self, startup_config: StartupConfig, kuno_config: KunoConfig | None = None, terminal_palette: Palette | None = None) -> None:
+    def __init__(
+        self,
+        startup_config: StartupConfig,
+        kuno_config: KunoConfig | None = None,
+        terminal_palette: Palette | None = None,
+    ) -> None:
         super().__init__()
-        self.kuno_config = kuno_config if kuno_config is not None else KunoConfig(path=DEFAULT_CONFIG_PATH)
+        self.kuno_config = (
+            kuno_config if kuno_config is not None else KunoConfig(path=DEFAULT_CONFIG_PATH)
+        )
         self._terminal_palette = terminal_palette
         self.available_contexts: list[str] = []
         self.available_namespaces: list[str] = []
@@ -1387,9 +1399,9 @@ class KunoApp(App[None]):
             return
         ts = time.strftime("%H:%M:%S")
         try:
-            with open("/tmp/kuno_debug.log", "a") as f:
+            with Path("/tmp/kuno_debug.log").open("a") as f:  # noqa: S108
                 f.write(f"[{ts}] {msg}\n")
-        except Exception:
+        except Exception:  # noqa: S110
             pass
 
     def compose(self) -> ComposeResult:
@@ -1398,7 +1410,7 @@ class KunoApp(App[None]):
         with Horizontal(id="explorer"):
             with Vertical(id="pod-panel"):
                 yield DataTable(id="pod-table")
-            with Vertical(id="details-panel"):
+            with VerticalScroll(id="details-panel"):
                 yield Static(f"{self._view_singular()}\n(loading)", id="pod-details")
         with Vertical(id="command-area"):
             with Horizontal(id="command-bar"):
@@ -1418,7 +1430,7 @@ class KunoApp(App[None]):
         self.theme = theme
         self._dblog(f"theme set to {self.theme}")
         command_area = self.query_one("#command-area", Vertical)
-        details_panel = self.query_one("#details-panel", Vertical)
+        details_panel = self.query_one("#details-panel", VerticalScroll)
         pod_panel = self.query_one("#pod-panel", Vertical)
         pod_panel.border_title = self._panel_title()
         details_panel.border_title = self._details_title()
@@ -1601,6 +1613,7 @@ class KunoApp(App[None]):
             pod_details.update(f"{self._view_singular()}\n(error: {error})")
             return
 
+        self._apply_sort()
         await self._render_pod_table()
         if self._current_rows():
             self._update_pod_details(0)
@@ -1627,7 +1640,7 @@ class KunoApp(App[None]):
     async def _render_pod_table(self) -> None:
         pod_table = self.query_one("#pod-table", DataTable)
         self.query_one("#pod-panel", Vertical).border_title = self._panel_title()
-        self.query_one("#details-panel", Vertical).border_title = self._details_title()
+        self.query_one("#details-panel", VerticalScroll).border_title = self._details_title()
         self._update_status_line()
         self._update_breadcrumb()
 
@@ -1658,6 +1671,7 @@ class KunoApp(App[None]):
     def _column_defs(self) -> list[ColumnDef]:
         view = self.current_view
         if view is ExplorerView.PODS:
+
             def _pod_status(p):
                 status = p.status
                 if status in ("Error", "CrashLoopBackOff", "Failed", "Evicted"):
@@ -1676,8 +1690,8 @@ class KunoApp(App[None]):
                 ColumnDef("Status", 10, "status", _pod_status),
                 ColumnDef("Restarts", 8, "restarts", lambda p: _dim(p.restarts, p)),
                 ColumnDef("Age", 6, "age", lambda p: _dim(p.age, p)),
-                ColumnDef("CPU", 8, "cpu", lambda p: _dim(p.cpu, p)),
-                ColumnDef("Memory", 8, "memory", lambda p: _dim(p.memory, p)),
+                ColumnDef("CPU Use/Req", 12, "cpu", lambda p: _dim(p.cpu, p)),
+                ColumnDef("Mem Use/Req", 12, "memory", lambda p: _dim(p.memory, p)),
                 ColumnDef("Containers", 10, "containers", lambda p: _dim(p.containers, p)),
             ]
         if view is ExplorerView.CONTAINERS:
@@ -1685,7 +1699,9 @@ class KunoApp(App[None]):
                 ColumnDef("Ready", 6, "ready", lambda c: c.ready),
                 ColumnDef("State", 10, "state", lambda c: c.state),
                 ColumnDef("Restarts", 8, "restarts", lambda c: str(c.restarts)),
-                ColumnDef("Image", None, "image", lambda c: truncate_for_table(c.image, max_length=40)),
+                ColumnDef(
+                    "Image", None, "image", lambda c: truncate_for_table(c.image, max_length=40)
+                ),
                 ColumnDef("CPU", 8, "cpu", lambda c: c.cpu),
                 ColumnDef("Memory", 8, "memory", lambda c: c.memory),
             ]
@@ -1750,6 +1766,7 @@ class KunoApp(App[None]):
     def _name_extractor(self):
         view = self.current_view
         if view is ExplorerView.PODS:
+
             def _pod_name(p):
                 name = truncate_for_table(p.name)
                 status = p.status
@@ -1758,6 +1775,7 @@ class KunoApp(App[None]):
                 if status in ("Succeeded", "Completed"):
                     return Text(name, style="dim green")
                 return name
+
             return _pod_name
         if view is ExplorerView.CONTAINERS:
             return lambda c: truncate_for_table(c.name)
@@ -1786,7 +1804,7 @@ class KunoApp(App[None]):
 
     def action_toggle_details(self) -> None:
         self.details_visible = not self.details_visible
-        details_panel = self.query_one("#details-panel", Vertical)
+        details_panel = self.query_one("#details-panel", VerticalScroll)
         details_panel.display = self.details_visible
         if self.details_visible:
             self._update_pod_details(self.query_one("#pod-table", DataTable).cursor_row)
@@ -2063,7 +2081,6 @@ class KunoApp(App[None]):
 
     def _command_pods(self) -> None:
         if self.current_view is not ExplorerView.PODS:
-            
             self.current_view = ExplorerView.PODS
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
@@ -2071,7 +2088,7 @@ class KunoApp(App[None]):
     def _open_selected_pod(self, index: int) -> None:
         if index < 0 or index >= len(self.pods):
             return
-        
+
         self.container_pod_name = self.pods[index].name
         self.current_view = ExplorerView.CONTAINERS
         self._pending_single_container_check = True
@@ -2089,7 +2106,6 @@ class KunoApp(App[None]):
             self.notify("No pod selected", severity="warning")
             return
         if self.current_view is not ExplorerView.CONTAINERS:
-            
             self.current_view = ExplorerView.CONTAINERS
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
@@ -2098,7 +2114,7 @@ class KunoApp(App[None]):
         if index < 0 or index >= len(self.contexts):
             return
         context = self.contexts[index]
-        
+
         self._command_context(context.name)
         self.current_view = ExplorerView.NAMESPACES
         self.refresh_current_view()
@@ -2107,56 +2123,49 @@ class KunoApp(App[None]):
         if index < 0 or index >= len(self.namespaces):
             return
         namespace = self.namespaces[index]
-        
+
         self._command_namespace(namespace.name)
         self.current_view = ExplorerView.PODS
         self.refresh_current_view()
 
     def _command_contexts(self) -> None:
         if self.current_view is not ExplorerView.CONTEXTS:
-            
             self.current_view = ExplorerView.CONTEXTS
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
 
     def _command_deployments(self) -> None:
         if self.current_view is not ExplorerView.DEPLOYMENTS:
-            
             self.current_view = ExplorerView.DEPLOYMENTS
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
 
     def _command_namespaces(self) -> None:
         if self.current_view is not ExplorerView.NAMESPACES:
-            
             self.current_view = ExplorerView.NAMESPACES
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
 
     def _command_pvc(self) -> None:
         if self.current_view is not ExplorerView.PVC:
-            
             self.current_view = ExplorerView.PVC
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
 
     def _command_secrets(self) -> None:
         if self.current_view is not ExplorerView.SECRETS:
-            
             self.current_view = ExplorerView.SECRETS
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
 
     def _command_services(self) -> None:
         if self.current_view is not ExplorerView.SERVICES:
-            
             self.current_view = ExplorerView.SERVICES
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
 
     def _command_statefulsets(self) -> None:
         if self.current_view is not ExplorerView.STATEFULSETS:
-            
             self.current_view = ExplorerView.STATEFULSETS
             self.refresh_current_view()
         self.query_one("#pod-table", DataTable).focus()
@@ -2522,6 +2531,11 @@ class KunoApp(App[None]):
         else:
             self.notify("Sort: default")
         self._apply_sort()
+        self._refresh_sorted_table()
+
+    @work(exclusive=True)
+    async def _refresh_sorted_table(self) -> None:
+        await self._render_pod_table()
 
     def _apply_sort(self) -> None:
         """Sort the current data in place and refresh the table."""
@@ -2536,7 +2550,16 @@ class KunoApp(App[None]):
                 return item.name.lower()
             if col == "status":
                 # Running < Pending < Error < Succeeded
-                order = {"Running": 0, "Pending": 1, "Error": 2, "CrashLoopBackOff": 2, "Failed": 2, "Evicted": 2, "Succeeded": 3, "Completed": 3}
+                order = {
+                    "Running": 0,
+                    "Pending": 1,
+                    "Error": 2,
+                    "CrashLoopBackOff": 2,
+                    "Failed": 2,
+                    "Evicted": 2,
+                    "Succeeded": 3,
+                    "Completed": 3,
+                }
                 return order.get(item.status, 99)
             if col == "state":
                 return getattr(item, "state", "")
@@ -2789,7 +2812,7 @@ class KunoApp(App[None]):
         pod_table.add_column("Name", width=56)
         if self.current_view is ExplorerView.PODS:
             pod_table.add_columns(
-                "Ready", "Status", "Restarts", "Age", "CPU", "Memory", "Containers"
+                "Ready", "Status", "Restarts", "Age", "CPU Use/Req", "Mem Use/Req", "Containers"
             )
         elif self.current_view is ExplorerView.CONTAINERS:
             pod_table.add_columns("Ready", "State", "Restarts", "Image", "CPU", "Memory")
@@ -2844,24 +2867,28 @@ class KunoApp(App[None]):
         return self.statefulsets
 
     def _panel_title(self) -> str:
+        sort_label = ""
+        if self._sort_column:
+            direction = "desc" if self._sort_reverse else "asc"
+            sort_label = f" | sort: {self._sort_column} {direction}"
         if self.current_view is ExplorerView.CONTAINERS:
             pod_name = self.container_pod_name or "-"
-            return f"Containers ({pod_name})"
+            return f"Containers ({pod_name}){sort_label}"
         if self.current_view is ExplorerView.CONTEXTS:
-            return "Contexts"
+            return f"Contexts{sort_label}"
         if self.current_view is ExplorerView.PODS:
-            return "Pods"
+            return f"Pods{sort_label}"
         if self.current_view is ExplorerView.NAMESPACES:
-            return "Namespaces"
+            return f"Namespaces{sort_label}"
         if self.current_view is ExplorerView.DEPLOYMENTS:
-            return "Deployments"
+            return f"Deployments{sort_label}"
         if self.current_view is ExplorerView.PVC:
-            return "PVC"
+            return f"PVC{sort_label}"
         if self.current_view is ExplorerView.SECRETS:
-            return "Secrets"
+            return f"Secrets{sort_label}"
         if self.current_view is ExplorerView.SERVICES:
-            return "Services"
-        return "StatefulSets"
+            return f"Services{sort_label}"
+        return f"StatefulSets{sort_label}"
 
     def _details_title(self) -> str:
         if self.current_view is ExplorerView.CONTAINERS:
@@ -2915,7 +2942,14 @@ class KunoApp(App[None]):
         if self.current_view is ExplorerView.CONTEXTS:
             parts.append(("contexts", "breadcrumb"))
         else:
-            parts.append(("namespaces", "breadcrumb-active" if self.current_view is ExplorerView.NAMESPACES else "breadcrumb"))
+            parts.append(
+                (
+                    "namespaces",
+                    "breadcrumb-active"
+                    if self.current_view is ExplorerView.NAMESPACES
+                    else "breadcrumb",
+                )
+            )
         if self.current_view is ExplorerView.CONTAINERS:
             parts.append(("pods", "breadcrumb"))
             if self.container_pod_name:

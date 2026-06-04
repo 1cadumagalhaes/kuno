@@ -85,19 +85,19 @@ def _safe_optional_str(data: dict, key: str) -> str | None:
 def _format_config(config: KunoConfig) -> str:
     lines: list[str] = [
         "[ui]",
-        f"theme = \"{config.theme}\"",
+        f'theme = "{config.theme}"',
         "",
         "[logs]",
         f"wrap = {str(config.wrap_logs).lower()}",
         f"timestamps = {str(config.timestamps_enabled).lower()}",
-        f"mode = \"{config.log_mode}\"",
+        f'mode = "{config.log_mode}"',
         f"tail_lines = {config.tail_lines}",
         "",
         "[defaults]",
     ]
     if config.default_context:
-        lines.append(f"context = \"{config.default_context}\"")
+        lines.append(f'context = "{config.default_context}"')
     if config.default_namespace:
-        lines.append(f"namespace = \"{config.default_namespace}\"")
+        lines.append(f'namespace = "{config.default_namespace}"')
     lines.append("")
     return "\n".join(lines)

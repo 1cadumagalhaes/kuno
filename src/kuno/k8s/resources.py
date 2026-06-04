@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Any, Protocol, cast
 
 import yaml
-from kubernetes_asyncio.client import AppsV1Api, CoreV1Api
+from kubernetes_asyncio.client import AppsV1Api, CoreV1Api, CustomObjectsApi
 
 from kuno.models import (
     ContainerSummary,
@@ -26,6 +26,10 @@ class HasCoreV1(Protocol):
     core_v1: CoreV1Api | Any | None
 
 
+class HasCustomObjects(Protocol):
+    custom_objects: CustomObjectsApi | Any | None
+
+
 class HasAppsV1(Protocol):
     apps_v1: AppsV1Api | Any | None
 
@@ -40,7 +44,61 @@ async def list_pods(kube_client: HasCoreV1, namespace: str) -> list[PodSummary]:
 
     pod_list = await kube_client.core_v1.list_namespaced_pod(namespace)
     current = datetime.now(UTC)
-    return [pod_summary_from_api_item(item, now=current) for item in pod_list.items]
+    metrics = await list_pod_metrics(kube_client, namespace)
+    return [
+        pod_summary_from_api_item(
+            item,
+            now=current,
+            metrics=metrics.get(getattr(item.metadata, "name", "")),
+        )
+        for item in pod_list.items
+    ]
+
+
+async def list_pod_metrics(
+    kube_client: HasCoreV1, namespace: str
+) -> dict[str, dict[str, dict[str, str]]]:
+    custom_objects = getattr(kube_client, "custom_objects", None)
+    if custom_objects is None:
+        return {}
+
+    try:
+        result = await custom_objects.list_namespaced_custom_object(
+            group="metrics.k8s.io",
+            version="v1beta1",
+            namespace=namespace,
+            plural="pods",
+        )
+    except Exception:
+        return {}
+
+    pod_metrics: dict[str, dict[str, dict[str, str]]] = {}
+    items = result.get("items") if isinstance(result, dict) else None
+    if not isinstance(items, list):
+        return pod_metrics
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        metadata = item.get("metadata")
+        pod_name = metadata.get("name") if isinstance(metadata, dict) else None
+        containers = item.get("containers")
+        if not isinstance(pod_name, str) or not isinstance(containers, list):
+            continue
+        by_container: dict[str, dict[str, str]] = {}
+        for container in containers:
+            if not isinstance(container, dict):
+                continue
+            name = container.get("name")
+            usage = container.get("usage")
+            if isinstance(name, str) and isinstance(usage, dict):
+                by_container[name] = {
+                    key: value
+                    for key, value in usage.items()
+                    if isinstance(key, str) and isinstance(value, str)
+                }
+        pod_metrics[pod_name] = by_container
+    return pod_metrics
 
 
 async def list_pod_containers(
@@ -199,9 +257,7 @@ async def list_statefulsets(kube_client: HasAppsV1, namespace: str) -> list[Stat
     return [statefulset_summary_from_api_item(item, now=current) for item in statefulset_list.items]
 
 
-async def _read_workload(
-    kube_client: HasAppsV1, namespace: str, kind: str, name: str
-) -> Any:
+async def _read_workload(kube_client: HasAppsV1, namespace: str, kind: str, name: str) -> Any:
     if kube_client.apps_v1 is None:
         raise RuntimeError("Kubernetes client is not connected")
 
@@ -235,16 +291,22 @@ async def list_pods_for_workload(
     if not selector_labels:
         return []
 
-    label_selector = ",".join(
-        f"{key}={value}" for key, value in sorted(selector_labels.items())
-    )
+    label_selector = ",".join(f"{key}={value}" for key, value in sorted(selector_labels.items()))
     pod_list = await kube_client.core_v1.list_namespaced_pod(
         namespace, label_selector=label_selector
     )
-    return [getattr(pod.metadata, "name", "") for pod in pod_list.items if getattr(pod.metadata, "name", "")]
+    return [
+        getattr(pod.metadata, "name", "")
+        for pod in pod_list.items
+        if getattr(pod.metadata, "name", "")
+    ]
 
 
-def pod_summary_from_api_item(item: Any, now: datetime | None = None) -> PodSummary:
+def pod_summary_from_api_item(
+    item: Any,
+    now: datetime | None = None,
+    metrics: dict[str, dict[str, str]] | None = None,
+) -> PodSummary:
     metadata = getattr(item, "metadata", None)
     status = getattr(item, "status", None)
     name = getattr(metadata, "name", None)
@@ -254,6 +316,13 @@ def pod_summary_from_api_item(item: Any, now: datetime | None = None) -> PodSumm
     creation_timestamp = getattr(metadata, "creation_timestamp", None)
     spec = getattr(item, "spec", None)
     containers = getattr(spec, "containers", None)
+    start_time = getattr(status, "start_time", None)
+    cpu_usage = format_cpu_usage(metrics)
+    cpu_requests = format_cpu_resource(containers, "requests")
+    cpu_limits = format_cpu_resource(containers, "limits")
+    memory_usage = format_memory_usage(metrics)
+    memory_requests = format_memory_resource(containers, "requests")
+    memory_limits = format_memory_resource(containers, "limits")
 
     if not isinstance(name, str) or not name:
         raise ValueError("Pod is missing a valid name")
@@ -268,8 +337,26 @@ def pod_summary_from_api_item(item: Any, now: datetime | None = None) -> PodSumm
         restarts=pod_restarts(container_statuses),
         age=format_age(creation_timestamp, now=now),
         containers=container_summary(containers),
-        cpu=format_cpu_requests(containers),
-        memory=format_memory_requests(containers),
+        cpu=format_use_request(cpu_usage, cpu_requests),
+        memory=format_use_request(memory_usage, memory_requests),
+        cpu_usage=cpu_usage,
+        cpu_requests=cpu_requests,
+        cpu_limits=cpu_limits,
+        memory_usage=memory_usage,
+        memory_requests=memory_requests,
+        memory_limits=memory_limits,
+        node=string_or_default(getattr(spec, "node_name", None), "-"),
+        pod_ip=string_or_default(getattr(status, "pod_ip", None), "-"),
+        host_ip=string_or_default(getattr(status, "host_ip", None), "-"),
+        qos_class=string_or_default(getattr(status, "qos_class", None), "-"),
+        priority=str(getattr(spec, "priority", None))
+        if getattr(spec, "priority", None) is not None
+        else "-",
+        created=format_timestamp(creation_timestamp),
+        started=format_timestamp(start_time),
+        conditions=pod_condition_lines(getattr(status, "conditions", None)),
+        owners=owner_lines(getattr(metadata, "owner_references", None)),
+        container_details=pod_container_detail_lines(containers, container_statuses, metrics),
     )
 
 
@@ -430,6 +517,51 @@ def container_state(container_status: Any) -> str:
     return "Unknown"
 
 
+def container_state_detail_lines(container_status: Any) -> tuple[str, ...]:
+    if container_status is None:
+        return ()
+    state = getattr(container_status, "state", None)
+    if state is None:
+        return ()
+    running = getattr(state, "running", None)
+    if running is not None:
+        started_at = format_timestamp(getattr(running, "started_at", None))
+        return (f"  started: {started_at}",) if started_at != "-" else ()
+    waiting = getattr(state, "waiting", None)
+    if waiting is not None:
+        lines: list[str] = []
+        reason = string_or_default(getattr(waiting, "reason", None), "-")
+        message = string_or_default(getattr(waiting, "message", None), "-")
+        if reason != "-":
+            lines.append(f"  reason: {reason}")
+        if message != "-":
+            lines.append(f"  message: {message}")
+        return tuple(lines)
+    terminated = getattr(state, "terminated", None)
+    if terminated is None:
+        return ()
+    lines = []
+    reason = string_or_default(getattr(terminated, "reason", None), "-")
+    message = string_or_default(getattr(terminated, "message", None), "-")
+    exit_code = getattr(terminated, "exit_code", None)
+    signal = getattr(terminated, "signal", None)
+    started_at = format_timestamp(getattr(terminated, "started_at", None))
+    finished_at = format_timestamp(getattr(terminated, "finished_at", None))
+    if reason != "-":
+        lines.append(f"  reason: {reason}")
+    if exit_code is not None:
+        lines.append(f"  exit code: {exit_code}")
+    if signal is not None:
+        lines.append(f"  signal: {signal}")
+    if started_at != "-":
+        lines.append(f"  started: {started_at}")
+    if finished_at != "-":
+        lines.append(f"  finished: {finished_at}")
+    if message != "-":
+        lines.append(f"  message: {message}")
+    return tuple(lines)
+
+
 def namespace_summary_from_api_item(
     item: Any, *, now: datetime | None = None, current_namespace: str | None
 ) -> NamespaceSummary:
@@ -480,6 +612,84 @@ def pod_restarts(container_statuses: Any) -> int:
         return 0
 
     return sum(int(getattr(status, "restart_count", 0) or 0) for status in container_statuses)
+
+
+def status_by_container_name(container_statuses: Any) -> dict[str, Any]:
+    statuses: dict[str, Any] = {}
+    if isinstance(container_statuses, list):
+        for container_status in container_statuses:
+            name = getattr(container_status, "name", None)
+            if isinstance(name, str) and name:
+                statuses[name] = container_status
+    return statuses
+
+
+def format_timestamp(value: Any) -> str:
+    if not isinstance(value, datetime):
+        return "-"
+    timestamp = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    return timestamp.isoformat()
+
+
+def pod_condition_lines(conditions: Any) -> tuple[str, ...]:
+    if not isinstance(conditions, list):
+        return ()
+    lines: list[str] = []
+    for condition in conditions:
+        condition_type = string_or_default(getattr(condition, "type", None), "Unknown")
+        status = string_or_default(getattr(condition, "status", None), "Unknown")
+        reason = getattr(condition, "reason", None)
+        suffix = f" ({reason})" if isinstance(reason, str) and reason else ""
+        lines.append(f"{condition_type}: {status}{suffix}")
+    return tuple(lines)
+
+
+def owner_lines(owner_references: Any) -> tuple[str, ...]:
+    if not isinstance(owner_references, list):
+        return ()
+    lines: list[str] = []
+    for owner in owner_references:
+        kind = getattr(owner, "kind", None)
+        name = getattr(owner, "name", None)
+        if isinstance(kind, str) and kind and isinstance(name, str) and name:
+            lines.append(f"{kind.lower()}/{name}")
+    return tuple(lines)
+
+
+def pod_container_detail_lines(
+    containers: Any,
+    container_statuses: Any,
+    metrics: dict[str, dict[str, str]] | None,
+) -> tuple[str, ...]:
+    if not isinstance(containers, list):
+        return ()
+    statuses = status_by_container_name(container_statuses)
+    lines: list[str] = []
+    for container in containers:
+        name = getattr(container, "name", None)
+        if not isinstance(name, str) or not name:
+            continue
+        container_status = statuses.get(name)
+        usage = metrics.get(name, {}) if metrics is not None else {}
+        lines.extend(
+            [
+                name,
+                f"  state: {container_state(container_status)}",
+                *container_state_detail_lines(container_status),
+                f"  ready: {'true' if getattr(container_status, 'ready', False) else 'false'}",
+                f"  restarts: {int(getattr(container_status, 'restart_count', 0) or 0)}",
+                f"  image: {string_or_default(getattr(container, 'image', None), '-')}",
+                "  cpu: "
+                f"{format_cpu_quantity(parse_cpu_quantity(usage.get('cpu')))} / "
+                f"{format_cpu_resource([container], 'requests')} / "
+                f"{format_cpu_resource([container], 'limits')}",
+                "  memory: "
+                f"{format_memory_bytes(parse_memory_quantity(usage.get('memory')))} / "
+                f"{format_memory_resource([container], 'requests')} / "
+                f"{format_memory_resource([container], 'limits')}",
+            ]
+        )
+    return tuple(lines)
 
 
 def format_age(value: Any, now: datetime | None = None) -> str:
@@ -558,18 +768,38 @@ def string_or_default(value: Any, default: str) -> str:
     return value if isinstance(value, str) and value else default
 
 
+def format_use_request(usage: str, request: str) -> str:
+    if usage == "-" and request == "-":
+        return "-"
+    return f"{usage}/{request}"
+
+
 def format_cpu_requests(containers: Any) -> str:
+    return format_cpu_resource(containers, "requests")
+
+
+def format_cpu_resource(containers: Any, resource_kind: str) -> str:
     total = Decimal(0)
     if isinstance(containers, list):
         for container in containers:
             resources = getattr(container, "resources", None)
-            requests = getattr(resources, "requests", None)
-            if isinstance(requests, dict):
-                total += parse_cpu_quantity(requests.get("cpu"))
+            values = getattr(resources, resource_kind, None)
+            if isinstance(values, dict):
+                total += parse_cpu_quantity(values.get("cpu"))
 
+    return format_cpu_quantity(total)
+
+
+def format_cpu_usage(metrics: dict[str, dict[str, str]] | None) -> str:
+    if metrics is None:
+        return "-"
+    total = sum((parse_cpu_quantity(usage.get("cpu")) for usage in metrics.values()), Decimal(0))
+    return format_cpu_quantity(total)
+
+
+def format_cpu_quantity(total: Decimal) -> str:
     if total == 0:
         return "-"
-
     millicores = int(total * 1000)
     if millicores % 1000 == 0:
         return str(millicores // 1000)
@@ -577,14 +807,29 @@ def format_cpu_requests(containers: Any) -> str:
 
 
 def format_memory_requests(containers: Any) -> str:
+    return format_memory_resource(containers, "requests")
+
+
+def format_memory_resource(containers: Any, resource_kind: str) -> str:
     total = 0
     if isinstance(containers, list):
         for container in containers:
             resources = getattr(container, "resources", None)
-            requests = getattr(resources, "requests", None)
-            if isinstance(requests, dict):
-                total += parse_memory_quantity(requests.get("memory"))
+            values = getattr(resources, resource_kind, None)
+            if isinstance(values, dict):
+                total += parse_memory_quantity(values.get("memory"))
 
+    return format_memory_bytes(total)
+
+
+def format_memory_usage(metrics: dict[str, dict[str, str]] | None) -> str:
+    if metrics is None:
+        return "-"
+    total = sum(parse_memory_quantity(usage.get("memory")) for usage in metrics.values())
+    return format_memory_bytes(total)
+
+
+def format_memory_bytes(total: int) -> str:
     if total == 0:
         return "-"
 
@@ -598,6 +843,10 @@ def format_memory_requests(containers: Any) -> str:
 def parse_cpu_quantity(value: Any) -> Decimal:
     if not isinstance(value, str) or not value:
         return Decimal(0)
+    if value.endswith("n"):
+        return Decimal(value[:-1]) / Decimal(1_000_000_000)
+    if value.endswith("u"):
+        return Decimal(value[:-1]) / Decimal(1_000_000)
     if value.endswith("m"):
         return Decimal(value[:-1]) / Decimal(1000)
     return Decimal(value)
@@ -620,17 +869,38 @@ def parse_memory_quantity(value: Any) -> int:
 
 
 def render_pod_details(pod: PodSummary) -> str:
-    return (
-        "pod\n"
-        f"name: {pod.name}\n"
-        f"ready: {pod.ready}\n"
-        f"status: {pod.status}\n"
-        f"restarts: {pod.restarts}\n"
-        f"age: {pod.age}\n"
-        f"containers: {pod.containers}\n"
-        f"cpu: {pod.cpu}\n"
-        f"memory: {pod.memory}"
-    )
+    lines = [
+        f"pod/{pod.name}",
+        "",
+        "Status",
+        f"phase: {pod.status}",
+        f"ready: {pod.ready}",
+        f"restarts: {pod.restarts}",
+        f"age: {pod.age}",
+        f"node: {pod.node}",
+        f"pod ip: {pod.pod_ip}",
+        f"host ip: {pod.host_ip}",
+        f"qos: {pod.qos_class}",
+        f"priority: {pod.priority}",
+        "",
+        "Resources",
+        f"CPU     use {pod.cpu_usage}    req {pod.cpu_requests}    lim {pod.cpu_limits}",
+        f"Memory  use {pod.memory_usage}    req {pod.memory_requests}    lim {pod.memory_limits}",
+        "",
+        "Conditions",
+        *(pod.conditions or ("-",)),
+        "",
+        "Ownership",
+        *(pod.owners or ("-",)),
+        "",
+        "Timestamps",
+        f"started: {pod.started}",
+        f"created: {pod.created}",
+        "",
+        "Containers",
+        *(pod.container_details or ("-",)),
+    ]
+    return "\n".join(lines)
 
 
 def render_deployment_details(deployment: DeploymentSummary) -> str:
@@ -769,9 +1039,7 @@ async def _read_resource(
     raise ValueError(f"Unsupported resource kind: {kind}")
 
 
-async def read_resource(
-    kube_client: HasCoreAndAppsV1, namespace: str, kind: str, name: str
-) -> Any:
+async def read_resource(kube_client: HasCoreAndAppsV1, namespace: str, kind: str, name: str) -> Any:
     return await _read_resource(kube_client, namespace, kind, name)
 
 
@@ -789,9 +1057,7 @@ async def get_resource_events(
     return [_event_summary_from_item(item, now=current) for item in event_list.items]
 
 
-async def list_namespace_events(
-    kube_client: HasCoreV1, namespace: str
-) -> list[EventSummary]:
+async def list_namespace_events(kube_client: HasCoreV1, namespace: str) -> list[EventSummary]:
     if kube_client.core_v1 is None:
         raise RuntimeError("Kubernetes client is not connected")
 
@@ -887,9 +1153,7 @@ def render_describe_text(item: Any) -> str:
                         lines.append(f"    Limits: {lim_str}")
                 ports = getattr(c, "ports", []) or []
                 if ports:
-                    ports_str = ", ".join(
-                        str(getattr(p, "container_port", "?")) for p in ports
-                    )
+                    ports_str = ", ".join(str(getattr(p, "container_port", "?")) for p in ports)
                     lines.append(f"    Ports: {ports_str}")
 
             volumes = getattr(spec, "volumes", []) or []

@@ -15,7 +15,7 @@ class SyncApp(App[None]):
 @pytest.mark.asyncio
 async def test_sync_adds_and_removes():
     app = SyncApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         table = app.query_one("#t", DataTable)
         sync = TableSync(table)
         sync.setup_columns(
@@ -48,7 +48,7 @@ async def test_sync_adds_and_removes():
 @pytest.mark.asyncio
 async def test_sync_preserves_cursor():
     app = SyncApp()
-    async with app.run_test() as pilot:
+    async with app.run_test():
         table = app.query_one("#t", DataTable)
         sync = TableSync(table)
         sync.setup_columns(

@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 from kuno.app import KunoApp
 from kuno.config import KunoConfig, load_config, merge_startup_config
 from kuno.models import StartupConfig
-from kuno.system_theme import Palette, query_terminal_palette
+from kuno.system_theme import query_terminal_palette
 
 
 class StoreUniqueValue(argparse.Action):
@@ -76,19 +77,20 @@ def main(argv: Sequence[str] | None = None, config: KunoConfig | None = None) ->
     return 0
 
 
-DEBUG_LOG_PATH = "/tmp/kuno_debug.log"
+DEBUG_LOG_PATH = Path("/tmp/kuno_debug.log")  # noqa: S108
 
 
 def _start_debug_log() -> None:
-    with open(DEBUG_LOG_PATH, "w") as f:
+    with DEBUG_LOG_PATH.open("w") as f:
         f.write("=== kuno debug log ===\n")
 
 
 def _dblog(msg: str) -> None:
     import time
+
     ts = time.strftime("%H:%M:%S")
     try:
-        with open(DEBUG_LOG_PATH, "a") as f:
+        with DEBUG_LOG_PATH.open("a") as f:
             f.write(f"[{ts}] {msg}\n")
-    except Exception:
+    except Exception:  # noqa: S110
         pass
