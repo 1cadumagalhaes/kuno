@@ -35,8 +35,20 @@
 }
 
 #pod-table {
-    background: transparent;
     height: 1fr;
+}
+
+#pod-table > .datatable--even-row {
+    background: $surface 10%;
+}
+
+#pod-table > .datatable--odd-row {
+    background: $surface 15%;
+}
+
+#pod-table > .datatable--cursor {
+    background: $primary;
+    color: $text;
 }
 
 #pod-details {
