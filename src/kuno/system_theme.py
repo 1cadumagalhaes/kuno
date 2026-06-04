@@ -23,29 +23,20 @@ class Palette(NamedTuple):
 _OSC_RE = re.compile(r"rgb:([0-9a-fA-F]+)/([0-9a-fA-F]+)/([0-9a-fA-F]+)")
 
 
-def _query_osc(seq: bytes) -> dict[int, RGB] | None:
-    if not sys.stdin.isatty():
-        return None
-    fd = sys.stdin.fileno()
-    old = termios.tcgetattr(fd)
-    try:
-        tty.setraw(fd)
-        os.write(fd, seq)
-        data = b""
-        end = time.time() + 1.0
-        while time.time() < end:
-            chunk = os.read(fd, 1)
-            if not chunk:
-                break
-            data += chunk
-            if data.endswith(b"\x07") or data.endswith(b"\x1b\\"):
-                break
-        return _parse_osc_response(data)
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+def _read_osc_response(fd: int, timeout: float = 0.5) -> bytes:
+    data = b""
+    end = time.time() + timeout
+    while time.time() < end:
+        chunk = os.read(fd, 1)
+        if not chunk:
+            break
+        data += chunk
+        if data.endswith(b"\x07") or data.endswith(b"\x1b\\"):
+            break
+    return data
 
 
-def _parse_osc_response(data: bytes) -> dict[int, RGB] | None:
+def _parse_osc_reply(data: bytes) -> dict[int, RGB]:
     result: dict[int, RGB] = {}
     text = data.decode("utf-8", errors="replace")
     for part in text.split("\x1b]")[1:]:
@@ -62,7 +53,7 @@ def _parse_osc_response(data: bytes) -> dict[int, RGB] | None:
             m = re.match(r"4;(\d+);rgb:([0-9a-fA-F]+)/([0-9a-fA-F]+)/([0-9a-fA-F]+)", part)
             if m:
                 result[int(m.group(1))] = _osc_hex(m.group(2), m.group(3), m.group(4))
-    return result if result else None
+    return result
 
 
 def _osc_hex(r: str, g: str, b: str) -> RGB:
@@ -72,14 +63,28 @@ def _osc_hex(r: str, g: str, b: str) -> RGB:
     return (_norm(r), _norm(g), _norm(b))
 
 
-def _query_palette() -> Palette | None:
-    batch = b"".join(
-        [b"\x1b]10;?\x07", b"\x1b]11;?\x07"]
-        + [f"\x1b]4;{i};?\x07".encode() for i in range(16)]
-    )
-    result = _query_osc(batch)
-    if not result:
+def query_terminal_palette() -> Palette | None:
+    """Query terminal for fg, bg, and ANSI 0-15 via OSC escape sequences.
+    Must be called BEFORE the TUI starts (stdin must be available).
+    Returns None if not in a terminal or query fails.
+    """
+    if not sys.stdin.isatty():
         return None
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        # Batch all queries
+        batch = b"".join(
+            [b"\x1b]10;?\x07", b"\x1b]11;?\x07"]
+            + [f"\x1b]4;{i};?\x07".encode() for i in range(16)]
+        )
+        os.write(fd, batch)
+        data = _read_osc_response(fd, 1.0)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+    result = _parse_osc_reply(data)
     bg = result.get(11)
     fg = result.get(10)
     ansi = [result.get(i) for i in range(16)]
@@ -133,56 +138,58 @@ def _grayscale(bg: RGB, palette: list[RGB], steps: int = 12) -> list[RGB]:
     return grays
 
 
-def _hue_score(r: int, g: int, b: int, target_warm: bool) -> float:
-    """Score how well a color matches warm (red/orange/yellow) vs cool (blue/cyan)."""
-    max_c = max(r, g, b)
-    min_c = min(r, g, b)
-    if max_c == min_c:
-        return 0  # gray, neutral
-    # Rough hue estimation
-    if max_c == r:
-        hue_deg = 0 + (g - b) / (max_c - min_c) * 60  # red-yellow range
-    elif max_c == g:
-        hue_deg = 120 + (b - r) / (max_c - min_c) * 60  # green-cyan range
+def _hue_angle(r: int, g: int, b: int) -> float:
+    """Return hue angle 0-360 for an RGB color."""
+    mx = max(r, g, b)
+    mn = min(r, g, b)
+    if mx == mn:
+        return 0
+    delta = mx - mn
+    if mx == r:
+        h = (g - b) / delta * 60
+    elif mx == g:
+        h = 120 + (b - r) / delta * 60
     else:
-        hue_deg = 240 + (r - g) / (max_c - min_c) * 60  # blue-magenta range
-    # Normalize to 0-360
-    hue_deg = hue_deg % 360
+        h = 240 + (r - g) / delta * 60
+    return h % 360
+
+
+def _hue_fit_cost(r: int, g: int, b: int, target_warm: bool) -> float:
+    """Return cost (0=best, higher=worse) for hue fit.
+    Target warm: prefer 0-60 (red→yellow), accept 300-360 (magenta).
+    Target cool: prefer 180-300 (blue→cyan), accept 60-180 (green).
+    """
+    h = _hue_angle(r, g, b)
     if target_warm:
-        # Warm: favor hues 0-60 (red→yellow), punish blues 180-300
-        if hue_deg <= 60:
-            return 5.0
-        if hue_deg >= 300:
-            return 3.0  # close to red (magenta)
-        if 180 <= hue_deg <= 300:
-            return -3.0  # blue ranges
-        return 0.0
+        if h <= 60:
+            return 0.0
+        if h >= 300:
+            return 2.0  # magenta-ish, ok
+        if 180 <= h <= 300:
+            return 10.0  # blue ranges: bad
+        return 5.0
     else:
-        # Cool: favor blues 180-300, punish reds 0-60
-        if 180 <= hue_deg <= 300:
-            return 5.0
-        if hue_deg <= 60 or hue_deg >= 300:
-            return -3.0
-        return 0.0
+        if 180 <= h <= 300:
+            return 0.0
+        if 60 < h < 180:
+            return 3.0  # green, ok
+        return 10.0  # red ranges: bad
 
 
 def _pick_accent(ansi: list[RGB], bg: RGB, fg: RGB) -> RGB:
-    """Pick accent from ANSI 1-15 with hue preference + contrast."""
-    bg_is_warm = bg[0] + bg[1] > bg[2] * 1.5
-
+    """Pick accent from ANSI 1-15 with hue fit + contrast."""
+    target_warm = bg[0] + bg[1] > bg[2] * 1.5
     best_color, best_score = ansi[1], float("-inf")
     for idx in range(1, 16):
-        if idx == 8:  # skip bright black
+        if idx == 8:
             continue
         c = ansi[idx]
         min_cr = min(_contrast_ratio(c, bg), _contrast_ratio(c, fg))
-        hue_bonus = _hue_score(c[0], c[1], c[2], bg_is_warm)
+        hue_cost = _hue_fit_cost(c[0], c[1], c[2], target_warm)
         sat = max(c) - min(c)
-        # Combined score: contrast + hue (weighted) + saturation
-        score = min_cr * 1.0 + hue_bonus * 1.5 + sat / 255.0 * 1.0
+        score = min_cr * 1.0 - hue_cost * 1.0 + sat / 255.0 * 0.5
         if score > best_score:
             best_color, best_score = c, score
-
     return best_color
 
 
@@ -190,19 +197,23 @@ def _rgb_str(c: RGB) -> str:
     return f"#{c[0]:02x}{c[1]:02x}{c[2]:02x}"
 
 
-def build_system_theme() -> Theme:
-    palette = _query_palette()
+def _fallback_palette() -> Palette:
+    """Fallback when terminal query fails (cosmic-rose)."""
+    return Palette(
+        background=(20, 8, 13),
+        foreground=(235, 235, 235),
+        ansi=[
+            (39, 24, 30), (199, 80, 106), (139, 196, 160), (196, 168, 130),
+            (122, 142, 196), (168, 123, 181), (123, 181, 168), (209, 198, 203),
+            (81, 70, 74), (224, 112, 136), (160, 212, 176), (212, 184, 146),
+            (138, 158, 212), (186, 139, 197), (139, 197, 184), (235, 235, 235),
+        ],
+    )
+
+
+def build_system_theme(palette: Palette | None = None) -> Theme:
     if palette is None:
-        palette = Palette(
-            background=(20, 8, 13),
-            foreground=(235, 235, 235),
-            ansi=[
-                (39, 24, 30), (199, 80, 106), (139, 196, 160), (196, 168, 130),
-                (122, 142, 196), (168, 123, 181), (123, 181, 168), (209, 198, 203),
-                (81, 70, 74), (224, 112, 136), (160, 212, 176), (212, 184, 146),
-                (138, 158, 212), (186, 139, 197), (139, 197, 184), (235, 235, 235),
-            ],
-        )
+        palette = _fallback_palette()
 
     bg = palette.background
     fg = palette.foreground
@@ -214,7 +225,7 @@ def build_system_theme() -> Theme:
 
     dark = _luminance(*bg) < 0.5
 
-    # Surface/panel: near-terminal-bg, no grey
+    # Surface/panel: near-terminal-bg
     surface = _snap(all_colors, (bg[0] + 8, bg[1] + 8, bg[2] + 8))
     panel = _snap(all_colors, (min(bg[0] + 16, 255), min(bg[1] + 16, 255), min(bg[2] + 16, 255)))
 
@@ -226,20 +237,15 @@ def build_system_theme() -> Theme:
                 muted_target = grays[i]
                 break
 
-    # Derive secondary and tertiary accents from palette
+    # Secondary/tertiary
     bg_is_warm = bg[0] + bg[1] > bg[2] * 1.5
-    if bg_is_warm:
-        secondary_idx, tertiary_idx = 5, 3  # magenta, yellow
-    else:
-        secondary_idx, tertiary_idx = 5, 4  # magenta, blue
-
-    secondary = ansi[secondary_idx]
-    tertiary = ansi[tertiary_idx]
+    secondary = ansi[5]  # magenta
+    tertiary = ansi[3] if bg_is_warm else ansi[4]
 
     return Theme(
         name="system",
         primary=_rgb_str(acc),
-        secondary=_rgb_str(secondary if _contrast_ratio(secondary, bg) >= 2.5 else ansi[7]),
+        secondary=_rgb_str(secondary),
         accent=_rgb_str(acc),
         foreground=_rgb_str(fg),
         background=_rgb_str(bg),
@@ -269,7 +275,5 @@ def build_system_theme() -> Theme:
             "input-selection-background": _rgb_str(acc),
             "breadcrumb": _rgb_str(acc),
             "breadcrumb-active": _rgb_str(secondary),
-            "secondary": _rgb_str(secondary),
-            "tertiary": _rgb_str(tertiary),
         },
     )

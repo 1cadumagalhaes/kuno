@@ -7,6 +7,7 @@ from typing import Any
 from kuno.app import KunoApp
 from kuno.config import KunoConfig, load_config, merge_startup_config
 from kuno.models import StartupConfig
+from kuno.system_theme import Palette, query_terminal_palette
 
 
 class StoreUniqueValue(argparse.Action):
@@ -62,7 +63,8 @@ def main(argv: Sequence[str] | None = None, config: KunoConfig | None = None) ->
     kuno_config = config if config is not None else load_config()
     cli_config, debug = parse_args(argv)
     startup_config = merge_startup_config(kuno_config, cli_config)
-    app = KunoApp(startup_config, kuno_config)
+    terminal_palette = query_terminal_palette()
+    app = KunoApp(startup_config, kuno_config, terminal_palette=terminal_palette)
     if debug:
         app.debug_enabled = True
         _start_debug_log()

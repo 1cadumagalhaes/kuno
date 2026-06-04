@@ -15,14 +15,11 @@ Footer {
     background: $background;
     color: $text;
     text-style: bold;
-    padding: 0 1;
-    height: 1;
 }
 
 FooterKey {
     background: $background;
     color: $text;
-    border-left: none;
 }
 
 FooterKey > .footer-key--key {

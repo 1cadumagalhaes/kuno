@@ -58,7 +58,7 @@ from kuno.k8s.resources import (
 )
 from kuno.log_view import LogView
 from kuno.logs import LogMode, format_log_line, parse_log_line, rich_log_line
-from kuno.system_theme import build_system_theme
+from kuno.system_theme import Palette, build_system_theme
 from textual.color import Color as TextualColor
 from kuno.models import (
     ContainerSummary,
@@ -1349,9 +1349,10 @@ class KunoApp(App[None]):
         ("y", "yaml_selected", "YAML"),
     ]
 
-    def __init__(self, startup_config: StartupConfig, kuno_config: KunoConfig | None = None) -> None:
+    def __init__(self, startup_config: StartupConfig, kuno_config: KunoConfig | None = None, terminal_palette: Palette | None = None) -> None:
         super().__init__()
         self.kuno_config = kuno_config if kuno_config is not None else KunoConfig(path=DEFAULT_CONFIG_PATH)
+        self._terminal_palette = terminal_palette
         self.available_contexts: list[str] = []
         self.available_namespaces: list[str] = []
         self.command_bar_visible = False
@@ -1401,7 +1402,7 @@ class KunoApp(App[None]):
 
     def on_mount(self) -> None:
         self._dblog("on_mount start")
-        self.register_theme(build_system_theme())
+        self.register_theme(build_system_theme(self._terminal_palette))
         self.theme = self.kuno_config.theme
         self._dblog(f"theme set to {self.theme}")
         command_area = self.query_one("#command-area", Vertical)
@@ -1432,7 +1433,7 @@ class KunoApp(App[None]):
         self._update_breadcrumb()
         self._dblog("calling refresh_current_view")
         self.refresh_current_view()
-        self.set_interval(10, self.refresh_current_view)
+        self.set_interval(2, self.refresh_current_view)
         self._dblog("on_mount done")
 
     @work(exclusive=True)
