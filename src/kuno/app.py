@@ -1622,6 +1622,8 @@ class KunoApp(App[None]):
         self._update_status_line()
         self._update_breadcrumb()
         self._configure_table_columns()
+        # Preserve cursor position across refresh
+        cursor_row = pod_table.cursor_row
         pod_table.clear()
         if self.current_view is ExplorerView.PODS:
             for pod in self.pods:
@@ -1726,6 +1728,10 @@ class KunoApp(App[None]):
                     statefulset.containers,
                     key=statefulset.name,
                 )
+        # Restore cursor position if valid
+        if cursor_row is not None and pod_table.row_count > 0:
+            new_row = min(cursor_row, pod_table.row_count - 1)
+            pod_table.move_cursor(row=new_row, animate=False)
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if event.data_table.id != "pod-table":

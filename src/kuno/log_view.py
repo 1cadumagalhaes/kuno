@@ -286,4 +286,5 @@ class LogView(ScrollView, can_focus=True):
                 segment.stylize(selection_style, start, end)
 
         strip = Strip(segment.render(self.app.console), cell_len(segment.plain))
+        strip = strip.apply_offsets(scroll_x, actual_y)
         return strip.crop_extend(scroll_x, scroll_x + self.size.width, Style())
