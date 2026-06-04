@@ -1654,14 +1654,31 @@ class KunoApp(App[None]):
     def _column_defs(self) -> list[ColumnDef]:
         view = self.current_view
         if view is ExplorerView.PODS:
+            def _pod_status(p):
+                status = p.status
+                if status in ("Error", "CrashLoopBackOff", "Failed", "Evicted"):
+                    return Text(status, style="bold red")
+                if status in ("Succeeded", "Completed"):
+                    return Text(status, style="dim green")
+                if status == "Running":
+                    return Text(status, style="green")
+                if status == "Pending":
+                    return Text(status, style="yellow")
+                return status
+
+            def _dim(value, p):
+                if p.status == "Succeeded":
+                    return Text(str(value), style="dim")
+                return str(value)
+
             return [
-                ColumnDef("Ready", 6, "ready", lambda p: p.ready),
-                ColumnDef("Status", 10, "status", lambda p: p.status),
-                ColumnDef("Restarts", 8, "restarts", lambda p: str(p.restarts)),
-                ColumnDef("Age", 6, "age", lambda p: p.age),
-                ColumnDef("CPU", 8, "cpu", lambda p: p.cpu),
-                ColumnDef("Memory", 8, "memory", lambda p: p.memory),
-                ColumnDef("Containers", 10, "containers", lambda p: p.containers),
+                ColumnDef("Ready", 6, "ready", lambda p: _dim(p.ready, p)),
+                ColumnDef("Status", 10, "status", _pod_status),
+                ColumnDef("Restarts", 8, "restarts", lambda p: _dim(p.restarts, p)),
+                ColumnDef("Age", 6, "age", lambda p: _dim(p.age, p)),
+                ColumnDef("CPU", 8, "cpu", lambda p: _dim(p.cpu, p)),
+                ColumnDef("Memory", 8, "memory", lambda p: _dim(p.memory, p)),
+                ColumnDef("Containers", 10, "containers", lambda p: _dim(p.containers, p)),
             ]
         if view is ExplorerView.CONTAINERS:
             return [

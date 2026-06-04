@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Sequence
 
+from rich.text import Text
 from textual.coordinate import Coordinate
 from textual.widgets import DataTable
 
@@ -14,7 +15,7 @@ class ColumnDef:
     name: str
     width: int | None
     key: str
-    extractor: Callable[[Any], str]
+    extractor: Callable[[Any], str | Text]
 
 
 class TableSync:
@@ -100,9 +101,9 @@ class TableSync:
 
         return removed_key
 
-    def _full_row_values(self, item: Any) -> list[str]:
+    def _full_row_values(self, item: Any) -> list[str | Text]:
         """Return ALL display values for a row (including Name column)."""
-        values: list[str] = []
+        values: list[str | Text] = []
         if self._name_extractor is not None:
             values.append(self._name_extractor(item))
         for col in self._col_defs:
