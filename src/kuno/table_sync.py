@@ -52,28 +52,32 @@ class TableSync:
         """
         old_keys = set(self.table.rows.keys())
         new_map: dict[str, Any] = {}
+        new_keys_ordered: list[str] = []
         for item in items:
             k = key_fn(item)
+            if k not in new_map:
+                new_keys_ordered.append(k)
             new_map[k] = item
-        new_keys = set(new_map.keys())
+        new_keys_set = set(new_keys_ordered)
 
         removed_key: str | None = None
 
         # Remove rows that no longer exist
-        for key in old_keys - new_keys:
+        for key in old_keys - new_keys_set:
             try:
                 self.table.remove_row(key)
                 removed_key = key
             except Exception:
                 pass
 
-        # Add new rows
-        for key in new_keys - old_keys:
-            values = self._full_row_values(new_map[key])
-            self.table.add_row(*values, key=key)
+        # Add new rows in the order they appear in the input list
+        for key in new_keys_ordered:
+            if key not in old_keys:
+                values = self._full_row_values(new_map[key])
+                self.table.add_row(*values, key=key)
 
         # Update changed cells for existing rows
-        for key in new_keys & old_keys:
+        for key in new_keys_set & old_keys:
             try:
                 new_values = self._full_row_values(new_map[key])
                 row_idx = self.table.get_row_index(key)
@@ -87,7 +91,7 @@ class TableSync:
                     )
 
         # Visual pending state: prepend (deleting) marker on Name cell
-        for key in pending & new_keys:
+        for key in pending & new_keys_set:
             try:
                 row_idx = self.table.get_row_index(key)
                 name_val = self.table.get_cell_at(Coordinate(row_idx, 0))

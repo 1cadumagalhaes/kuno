@@ -1346,6 +1346,7 @@ class KunoApp(App[None]):
         Binding("escape", "close_command_bar", "Close", show=False),
         ("r", "refresh_pods", "Refresh"),
         ("y", "yaml_selected", "YAML"),
+        ("shift+o", "cycle_sort", "Sort"),
     ]
 
     def __init__(self, startup_config: StartupConfig, kuno_config: KunoConfig | None = None, terminal_palette: Palette | None = None) -> None:
@@ -1377,6 +1378,9 @@ class KunoApp(App[None]):
         self._table_sync: TableSync | None = None
         self._pending_actions: dict[str, str] = {}
         self._last_table_view: ExplorerView | None = None
+        # Sort state
+        self._sort_column: str | None = None
+        self._sort_reverse: bool = False
 
     def _dblog(self, msg: str) -> None:
         if not self.debug_enabled:
@@ -2477,6 +2481,97 @@ class KunoApp(App[None]):
 
     def action_refresh_pods(self) -> None:
         self._command_refresh()
+
+    def action_cycle_sort(self) -> None:
+        """Cycle through sort columns for the current view."""
+        view = self.current_view
+        # Define sortable columns per view
+        sortable: dict[ExplorerView, list[str]] = {
+            ExplorerView.PODS: ["name", "status", "age"],
+            ExplorerView.CONTAINERS: ["name", "state", "restarts"],
+            ExplorerView.DEPLOYMENTS: ["name", "ready", "age"],
+            ExplorerView.SERVICES: ["name", "type", "age"],
+            ExplorerView.PVC: ["name", "status", "age"],
+            ExplorerView.NAMESPACES: ["name", "status", "age"],
+            ExplorerView.SECRETS: ["name", "type", "age"],
+            ExplorerView.STATEFULSETS: ["name", "ready", "age"],
+            ExplorerView.CONTEXTS: ["name", "cluster"],
+        }
+        columns = sortable.get(view, ["name"])
+        if self._sort_column is None:
+            self._sort_column = columns[0]
+            self._sort_reverse = False
+        else:
+            try:
+                idx = columns.index(self._sort_column)
+            except ValueError:
+                idx = -1
+            if idx + 1 < len(columns):
+                # Next column, same direction
+                self._sort_column = columns[idx + 1]
+                self._sort_reverse = False
+            elif not self._sort_reverse:
+                # Same column, reverse direction
+                self._sort_reverse = True
+            else:
+                # Back to default (no sort)
+                self._sort_column = None
+                self._sort_reverse = False
+        if self._sort_column:
+            self.notify(f"Sort: {self._sort_column} {'desc' if self._sort_reverse else 'asc'}")
+        else:
+            self.notify("Sort: default")
+        self._apply_sort()
+
+    def _apply_sort(self) -> None:
+        """Sort the current data in place and refresh the table."""
+        rows = self._current_rows()
+        if not rows or self._sort_column is None:
+            return
+        col = self._sort_column
+        reverse = self._sort_reverse
+
+        def sort_key(item):
+            if col == "name":
+                return item.name.lower()
+            if col == "status":
+                # Running < Pending < Error < Succeeded
+                order = {"Running": 0, "Pending": 1, "Error": 2, "CrashLoopBackOff": 2, "Failed": 2, "Evicted": 2, "Succeeded": 3, "Completed": 3}
+                return order.get(item.status, 99)
+            if col == "state":
+                return getattr(item, "state", "")
+            if col == "ready":
+                return getattr(item, "ready", "")
+            if col == "type":
+                return getattr(item, "type", "")
+            if col == "cluster":
+                return getattr(item, "cluster", "")
+            if col == "age":
+                age_str = getattr(item, "age", "")
+                # Parse age string: 5s < 1m < 1h < 1d
+                try:
+                    if age_str.endswith("s"):
+                        return int(age_str[:-1])
+                    if age_str.endswith("m"):
+                        return int(age_str[:-1]) * 60
+                    if age_str.endswith("h"):
+                        return int(age_str[:-1]) * 3600
+                    if age_str.endswith("d"):
+                        return int(age_str[:-1]) * 86400
+                except ValueError:
+                    pass
+                return 0
+            if col == "restarts":
+                return getattr(item, "restarts", 0)
+            return ""
+
+        sorted_rows = sorted(rows, key=sort_key, reverse=reverse)
+        # Update the data list (mutate in place)
+        rows.clear()
+        rows.extend(sorted_rows)
+        # Force table refresh with new order
+        self._last_table_view = None
+        self._table_sync = None
 
     def _command_theme(self, theme_name: str | None) -> None:
         if theme_name is None:
