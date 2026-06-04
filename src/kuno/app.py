@@ -11,6 +11,7 @@ from rich.syntax import Syntax
 from rich.text import Text
 from textual import events, work
 from textual.app import App, ComposeResult, SystemCommand
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, DataTable, Footer, Input, Select, Static, Switch
@@ -716,12 +717,11 @@ class ManifestScreen(Screen[None]):
     ]
 
     def __init__(
-        self, *, yaml_content: str, resource_name: str, yaml_theme: str
+        self, *, yaml_content: str, resource_name: str
     ) -> None:
         super().__init__()
         self.yaml_content = yaml_content
         self.resource_name = resource_name
-        self.yaml_theme = yaml_theme
         self._lines: list[str] = yaml_content.splitlines()
         self._match_indices: list[int] = []
         self._match_cursor: int = 0
@@ -1243,7 +1243,10 @@ class ConfigScreen(Screen[None]):
     def __init__(self, *, kuno_config: KunoConfig, app_themes: list[str]) -> None:
         super().__init__()
         self._config = kuno_config
-        self._app_themes = app_themes
+        self._app_themes = [t for t in app_themes if t != "textual-ansi"]
+        # Normalize stored textual-ansi to system
+        if self._config.theme == "textual-ansi":
+            self._config.theme = "system"
 
     def compose(self) -> ComposeResult:
         yield Static("", id="status-line")
@@ -1257,13 +1260,6 @@ class ConfigScreen(Screen[None]):
                         [(t, t) for t in self._app_themes],
                         value=self._config.theme,
                         id="config-theme",
-                    )
-                with Horizontal(classes="config-row"):
-                    yield Static("YAML theme", classes="config-label")
-                    yield Select(
-                        [(t, t) for t in self._app_themes],
-                        value=self._config.yaml_theme,
-                        id="config-yaml-theme",
                     )
             with Vertical(id="config-section-logs", classes="config-section"):
                 yield Static("Logs", classes="panel-title")
@@ -1295,11 +1291,13 @@ class ConfigScreen(Screen[None]):
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "config-theme" and event.value is not Select.BLANK:
-            self.app.theme = str(event.value)
+            chosen = str(event.value)
+            if chosen == "textual-ansi":
+                chosen = "system"
+            self.app.theme = chosen
 
     def action_save(self) -> None:
         theme_select = self.query_one("#config-theme", Select)
-        yaml_theme_select = self.query_one("#config-yaml-theme", Select)
         log_mode_select = self.query_one("#config-log-mode", Select)
         tail_input = self.query_one("#config-tail-lines", Input)
         wrap_switch = self.query_one("#config-wrap", Switch)
@@ -1307,8 +1305,8 @@ class ConfigScreen(Screen[None]):
 
         if theme_select.value is not Select.BLANK:
             self._config.theme = str(theme_select.value)
-        if yaml_theme_select.value is not Select.BLANK:
-            self._config.yaml_theme = str(yaml_theme_select.value)
+        if self._config.theme == "textual-ansi":
+            self._config.theme = "system"
         if log_mode_select.value is not Select.BLANK:
             self._config.log_mode = str(log_mode_select.value)
         try:
@@ -1333,18 +1331,18 @@ class ConfigScreen(Screen[None]):
 class KunoApp(App[None]):
     CSS_PATH = "app.tcss"
     MAX_COMMAND_SUGGESTIONS = 4
-    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
+    BINDINGS: ClassVar[list[tuple[str, str, str] | Binding]] = [
         ("backspace", "go_back", "Back"),
         ("ctrl+d", "describe_selected", "Describe"),
         ("d", "toggle_details", "Details"),
         ("ctrl+e", "events_selected", "Events"),
         ("ctrl+l", "open_logs", "Logs"),
-        ("j", "next_row", "Down"),
-        ("k", "previous_row", "Up"),
-        ("g", "jump_top", "Top"),
-        ("G", "jump_bottom", "Bottom"),
+        Binding("j", "next_row", "Down", show=False),
+        Binding("k", "previous_row", "Up", show=False),
+        Binding("g", "jump_top", "Top", show=False),
+        Binding("G", "jump_bottom", "Bottom", show=False),
         ("colon", "open_command_bar", "Command"),
-        ("escape", "close_command_bar", "Close"),
+        Binding("escape", "close_command_bar", "Close", show=False),
         ("r", "refresh_pods", "Refresh"),
         ("y", "yaml_selected", "YAML"),
     ]
@@ -1402,8 +1400,13 @@ class KunoApp(App[None]):
 
     def on_mount(self) -> None:
         self._dblog("on_mount start")
-        self.register_theme(build_system_theme(self._terminal_palette))
-        self.theme = self.kuno_config.theme
+        system_theme = build_system_theme(self._terminal_palette)
+        self.register_theme(system_theme)
+        # Default to system theme; migrate old textual-ansi
+        theme = self.kuno_config.theme
+        if theme == "textual-ansi":
+            theme = "system"
+        self.theme = theme
         self._dblog(f"theme set to {self.theme}")
         command_area = self.query_one("#command-area", Vertical)
         details_panel = self.query_one("#details-panel", Vertical)
@@ -2215,7 +2218,6 @@ class KunoApp(App[None]):
             ManifestScreen(
                 yaml_content=yaml_content,
                 resource_name=f"{kind}/{name}",
-                yaml_theme=self.kuno_config.yaml_theme,
             )
         )
 
@@ -2446,8 +2448,10 @@ class KunoApp(App[None]):
         if theme_name is None:
             self.action_change_theme()
             return
+        if theme_name == "textual-ansi":
+            theme_name = "system"
         self.theme = theme_name
-        self.kuno_config.theme = theme_name
+        self.kuno_config.theme = "system"
         save_config(self.kuno_config)
         self.notify(f"Switched theme to {self.theme}")
 

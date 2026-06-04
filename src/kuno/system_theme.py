@@ -23,17 +23,39 @@ class Palette(NamedTuple):
 _OSC_RE = re.compile(r"rgb:([0-9a-fA-F]+)/([0-9a-fA-F]+)/([0-9a-fA-F]+)")
 
 
-def _read_osc_response(fd: int, timeout: float = 0.5) -> bytes:
+def _query_single_osc(fd: int, query: bytes, timeout: float = 0.4) -> bytes | None:
+    """Send one OSC query and read back the response until terminator."""
+    os.write(fd, query)
     data = b""
     end = time.time() + timeout
     while time.time() < end:
-        chunk = os.read(fd, 1)
+        try:
+            chunk = os.read(fd, 1)
+        except (OSError, BlockingIOError):
+            break
         if not chunk:
             break
         data += chunk
         if data.endswith(b"\x07") or data.endswith(b"\x1b\\"):
             break
-    return data
+    return data if data else None
+
+
+def _drain(fd: int, timeout: float = 0.15) -> bytes:
+    """Read anything left on the fd after a query (non-blocking)."""
+    drained = b""
+    end = time.time() + timeout
+    # Best-effort non-blocking read without fcntl (simpler, fewer edge cases)
+    while time.time() < end:
+        try:
+            chunk = os.read(fd, 1024)
+            if not chunk:
+                break
+            drained += chunk
+        except (OSError, BlockingIOError):
+            break
+        time.sleep(0.01)
+    return drained
 
 
 def _parse_osc_reply(data: bytes) -> dict[int, RGB]:
@@ -71,25 +93,60 @@ def query_terminal_palette() -> Palette | None:
     if not sys.stdin.isatty():
         return None
     fd = sys.stdin.fileno()
-    old = termios.tcgetattr(fd)
     try:
-        tty.setraw(fd)
-        # Batch all queries
-        batch = b"".join(
-            [b"\x1b]10;?\x07", b"\x1b]11;?\x07"]
-            + [f"\x1b]4;{i};?\x07".encode() for i in range(16)]
-        )
-        os.write(fd, batch)
-        data = _read_osc_response(fd, 1.0)
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        tb = termios.tcgetattr(fd)
+    except (termios.error, OSError):
+        return None
+    tty.setraw(fd)
+    try:
+        # Query foreground and background sequentially (widely supported)
+        fg_data = _query_single_osc(fd, b"\x1b]10;?\x07", 0.4)
+        _drain(fd)
+        bg_data = _query_single_osc(fd, b"\x1b]11;?\x07", 0.4)
+        _drain(fd)
 
-    result = _parse_osc_reply(data)
+        # Query ANSI 0-15 — batch is faster, but read response carefully
+        batch = b"".join(f"\x1b]4;{i};?\x07".encode() for i in range(16))
+        os.write(fd, batch)
+        ansi_data = b""
+        end = time.time() + 1.2
+        while time.time() < end:
+            try:
+                chunk = os.read(fd, 1)
+            except (OSError, BlockingIOError):
+                break
+            if not chunk:
+                break
+            ansi_data += chunk
+            # OSC 4 responses end with \x07 or \x1b\\
+            if ansi_data.endswith(b"\x07") or ansi_data.endswith(b"\x1b\\"):
+                # Keep reading a bit more in case more responses are queued
+                continue
+        _drain(fd)
+    finally:
+        try:
+            termios.tcsetattr(fd, termios.TCSADRAIN, tb)
+        except (termios.error, OSError):
+            pass
+
+    all_data = b"".join(d for d in (fg_data, bg_data, ansi_data) if d)
+    result = _parse_osc_reply(all_data)
+
     bg = result.get(11)
     fg = result.get(10)
     ansi = [result.get(i) for i in range(16)]
-    if bg is None or fg is None or any(c is None for c in ansi):
+
+    # Validate: need at least fg + bg, and fg/bg must be different
+    if bg is None or fg is None:
         return None
+    if _contrast_ratio(fg, bg) < 1.5:
+        return None
+
+    # If ANSI colors are incomplete, use fallback ANSI but keep detected fg/bg
+    if any(c is None for c in ansi):
+        fallback = _fallback_palette()
+        ansi = fallback.ansi
+
     return Palette(background=bg, foreground=fg, ansi=[c for c in ansi if c is not None])  # type: ignore[arg-type]
 
 
@@ -155,25 +212,20 @@ def _hue_angle(r: int, g: int, b: int) -> float:
 
 
 def _hue_fit_cost(r: int, g: int, b: int, target_warm: bool) -> float:
-    """Return cost (0=best, higher=worse) for hue fit.
-    Target warm: prefer 0-60 (red→yellow), accept 300-360 (magenta).
-    Target cool: prefer 180-300 (blue→cyan), accept 60-180 (green).
-    """
+    """Return cost (0=best, higher=worse) for hue fit."""
     h = _hue_angle(r, g, b)
     if target_warm:
-        if h <= 60:
-            return 0.0
-        if h >= 300:
-            return 2.0  # magenta-ish, ok
-        if 180 <= h <= 300:
-            return 10.0  # blue ranges: bad
-        return 5.0
+        if h <= 60 or h >= 300:
+            return 0.0  # red, yellow, magenta — all great for warm themes
+        if 60 < h <= 180:
+            return 5.0  # green, cyan — ok
+        return 10.0  # blue ranges — bad
     else:
         if 180 <= h <= 300:
-            return 0.0
+            return 0.0  # blue, cyan — great for cool themes
         if 60 < h < 180:
-            return 3.0  # green, ok
-        return 10.0  # red ranges: bad
+            return 3.0  # green — ok
+        return 10.0  # red ranges — bad
 
 
 def _pick_accent(ansi: list[RGB], bg: RGB, fg: RGB) -> RGB:
@@ -265,7 +317,10 @@ def build_system_theme(palette: Palette | None = None) -> Theme:
             "border": _rgb_str(acc),
             "border-blurred": _rgb_str(grays[4]),
             "footer-key-foreground": _rgb_str(fg),
-            "footer-key-background": _rgb_str(bg),
+            "footer-key-background": _rgb_str(acc),
+            "footer-item-background": _rgb_str(bg),
+            "footer-foreground": _rgb_str(fg),
+            "footer-background": _rgb_str(bg),
             "footer-description-foreground": _rgb_str(fg),
             "footer-description-background": _rgb_str(bg),
             "button-color-foreground": _rgb_str(bg),
@@ -274,6 +329,6 @@ def build_system_theme(palette: Palette | None = None) -> Theme:
             "input-cursor-text-style": "reverse",
             "input-selection-background": _rgb_str(acc),
             "breadcrumb": _rgb_str(acc),
-            "breadcrumb-active": _rgb_str(secondary),
+            "breadcrumb-active": _rgb_str(secondary if _contrast_ratio(secondary, surface) >= 2.5 else ansi[3]),
         },
     )

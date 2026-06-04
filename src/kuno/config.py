@@ -13,7 +13,6 @@ DEFAULT_CONFIG_PATH = Path.home() / ".config" / "kuno" / "config.toml"
 class KunoConfig:
     path: Path
     theme: str = "system"
-    yaml_theme: str = "monokai"
     wrap_logs: bool = False
     timestamps_enabled: bool = False
     log_mode: str = "raw"
@@ -39,8 +38,7 @@ def load_config(path: Path | None = None) -> KunoConfig:
 
     return KunoConfig(
         path=config_path,
-        theme=_safe_str(ui, "theme", "nord"),
-        yaml_theme=_safe_str(ui, "yaml_theme", "monokai"),
+        theme=_safe_str(ui, "theme", "system"),
         wrap_logs=_safe_bool(logs, "wrap", False),
         timestamps_enabled=_safe_bool(logs, "timestamps", False),
         log_mode=_safe_str(logs, "mode", "raw"),
@@ -88,7 +86,6 @@ def _format_config(config: KunoConfig) -> str:
     lines: list[str] = [
         "[ui]",
         f"theme = \"{config.theme}\"",
-        f"yaml_theme = \"{config.yaml_theme}\"",
         "",
         "[logs]",
         f"wrap = {str(config.wrap_logs).lower()}",
