@@ -12,6 +12,7 @@ from kuno.models import (
     DeploymentSummary,
     ExplorerView,
     NamespaceSummary,
+    PodSource,
     PodSummary,
     PvcSummary,
     SecretSummary,
@@ -2479,3 +2480,157 @@ async def test_app_executes_namespace_command(monkeypatch) -> None:
         await pilot.pause()
         status_line = app.query_one("#status-line", Static)
         assert "billing" in str(status_line.content)
+
+
+@pytest.mark.asyncio
+async def test_containers_view_logs_selects_correct_container(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+    monkeypatch.setattr("kuno.app.load_available_context_names", lambda: ["prod"])
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
+        return [
+            PodSummary(
+                name="api-1",
+                ready="1/1",
+                status="Running",
+                restarts=0,
+                age="1m",
+                containers="api,sidecar",
+                cpu="500m",
+                memory="256Mi",
+            ),
+            PodSummary(
+                name="api-2",
+                ready="1/1",
+                status="Running",
+                restarts=0,
+                age="1m",
+                containers="worker",
+                cpu="100m",
+                memory="64Mi",
+            ),
+        ]
+
+    async def fake_list_pod_containers(
+        kube_client: FakeKubeClient, namespace: str, pod_name: str
+    ) -> list[ContainerSummary]:
+        if pod_name == "api-1":
+            return [
+                ContainerSummary(name="api", pod="api-1", ready="yes", state="Running", restarts=0, image="api:v1", cpu="250m", memory="128Mi"),
+                ContainerSummary(name="sidecar", pod="api-1", ready="yes", state="Running", restarts=1, image="envoy:v1", cpu="100m", memory="64Mi"),
+            ]
+        return []
+
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
+    monkeypatch.setattr("kuno.app.list_pod_containers", fake_list_pod_containers)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app.current_view = ExplorerView.PODS
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        table = app.query_one("#pod-table", DataTable)
+        assert table.row_count == 2
+
+        table.move_cursor(row=0)
+        app._open_selected_pod(0)
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app.current_view is ExplorerView.CONTAINERS
+        assert app.containers[0].name == "api"
+        assert app.containers[1].name == "sidecar"
+
+        table = app.query_one("#pod-table", DataTable)
+        table.move_cursor(row=1)
+
+        source = app._selected_logs_source()
+        assert source is not None
+        assert isinstance(source, PodSource)
+        assert source.pod_name == "api-1"
+        assert source.container_name == "sidecar"
+
+
+@pytest.mark.asyncio
+async def test_refresh_preserves_selected_pod_by_key(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+    monkeypatch.setattr("kuno.app.load_available_context_names", lambda: ["prod"])
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
+        return [
+            PodSummary(
+                name="zebra",
+                ready="1/1",
+                status="Running",
+                restarts=0,
+                age="1m",
+                containers="api",
+                cpu="100m",
+                memory="64Mi",
+            ),
+            PodSummary(
+                name="alpha",
+                ready="1/1",
+                status="Running",
+                restarts=0,
+                age="1m",
+                containers="api",
+                cpu="100m",
+                memory="64Mi",
+            ),
+            PodSummary(
+                name="middle",
+                ready="1/1",
+                status="Running",
+                restarts=0,
+                age="1m",
+                containers="api",
+                cpu="100m",
+                memory="64Mi",
+            ),
+        ]
+
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        table = app.query_one("#pod-table", DataTable)
+        table.move_cursor(row=0)
+        assert app._selected_resource_name() == "zebra"
+
+        app._sort_column = "name"
+        app._sort_reverse = False
+        await app._do_refresh_current_view()
+
+        assert table.cursor_row == 2
+        assert app._selected_resource_name() == "zebra"

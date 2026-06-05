@@ -1,3 +1,7 @@
+Screen {
+    background: transparent;
+}
+
 #status-line {
     background: $primary;
     color: $text;
@@ -15,6 +19,7 @@
 
 
 #explorer {
+    background: transparent;
     height: 1fr;
     margin: 0 1 1 1;
 }
@@ -35,6 +40,7 @@
 }
 
 #pod-table {
+    background: transparent;
     height: 1fr;
 }
 

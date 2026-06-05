@@ -205,7 +205,7 @@ async def test_cycle_sort_rerenders_table_and_title(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_shift_o_binding_cycles_sort(monkeypatch) -> None:
+async def test_ctrl_o_binding_cycles_sort(monkeypatch) -> None:
     def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
         return startup_config
 
@@ -235,7 +235,7 @@ async def test_shift_o_binding_cycles_sort(monkeypatch) -> None:
     app = KunoApp(StartupConfig(context="prod", namespace="payments"))
 
     async with app.run_test() as pilot:
-        await pilot.press("shift+o")
+        await pilot.press("ctrl+o")
         await pilot.pause()
 
         assert app._sort_column == "name"

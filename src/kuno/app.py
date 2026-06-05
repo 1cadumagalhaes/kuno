@@ -1351,7 +1351,7 @@ class KunoApp(App[None]):
         Binding("escape", "close_command_bar", "Close", show=False),
         ("r", "refresh_pods", "Refresh"),
         ("y", "yaml_selected", "YAML"),
-        ("shift+o", "cycle_sort", "Sort"),
+        ("ctrl+o", "cycle_sort", "Sort"),
     ]
 
     def __init__(
@@ -1616,7 +1616,7 @@ class KunoApp(App[None]):
         self._apply_sort()
         await self._render_pod_table()
         if self._current_rows():
-            self._update_pod_details(0)
+            self._update_pod_details(self.query_one("#pod-table", DataTable).cursor_row)
         else:
             pod_details.update(f"{self._view_singular()}\n(no {self.current_view.value} found)")
 
@@ -1643,6 +1643,8 @@ class KunoApp(App[None]):
         self.query_one("#details-panel", VerticalScroll).border_title = self._details_title()
         self._update_status_line()
         self._update_breadcrumb()
+        previous_cursor_row = pod_table.cursor_row
+        previous_cursor_key = self._row_key_at_index(previous_cursor_row)
 
         view_changed = self._last_table_view != self.current_view
         if view_changed or self._table_sync is None:
@@ -1664,9 +1666,15 @@ class KunoApp(App[None]):
         )
         if removed_key is not None and removed_key in self._pending_actions:
             del self._pending_actions[removed_key]
+        if previous_cursor_key is not None and self._move_cursor_to_key(previous_cursor_key):
+            return
         cursor_row = pod_table.cursor_row
         if cursor_row is not None and cursor_row >= pod_table.row_count:
             pod_table.move_cursor(row=max(pod_table.row_count - 1, 0), animate=False)
+        elif cursor_row is None and previous_cursor_row is not None and pod_table.row_count > 0:
+            pod_table.move_cursor(
+                row=min(previous_cursor_row, pod_table.row_count - 1), animate=False
+            )
 
     def _column_defs(self) -> list[ColumnDef]:
         view = self.current_view
@@ -2086,22 +2094,22 @@ class KunoApp(App[None]):
         self.query_one("#pod-table", DataTable).focus()
 
     def _open_selected_pod(self, index: int) -> None:
-        if index < 0 or index >= len(self.pods):
+        pod = self._item_by_row_index(index)
+        if not isinstance(pod, PodSummary):
             return
 
-        self.container_pod_name = self.pods[index].name
+        self.container_pod_name = pod.name
         self.current_view = ExplorerView.CONTAINERS
         self._pending_single_container_check = True
         self.refresh_current_view()
 
     def _command_containers(self) -> None:
         if self.current_view is ExplorerView.PODS:
-            pod_table = self.query_one("#pod-table", DataTable)
-            cursor_row = pod_table.cursor_row
-            if cursor_row is None or cursor_row < 0 or cursor_row >= len(self.pods):
+            pod = self._selected_item()
+            if not isinstance(pod, PodSummary):
                 self.notify("No pod selected", severity="warning")
                 return
-            self.container_pod_name = self.pods[cursor_row].name
+            self.container_pod_name = pod.name
         if self.container_pod_name is None:
             self.notify("No pod selected", severity="warning")
             return
@@ -2111,20 +2119,20 @@ class KunoApp(App[None]):
         self.query_one("#pod-table", DataTable).focus()
 
     def _open_selected_context(self, index: int) -> None:
-        if index < 0 or index >= len(self.contexts):
+        ctx = self._item_by_row_index(index)
+        if not isinstance(ctx, ContextSummary):
             return
-        context = self.contexts[index]
 
-        self._command_context(context.name)
+        self._command_context(ctx.name)
         self.current_view = ExplorerView.NAMESPACES
         self.refresh_current_view()
 
     def _open_selected_namespace(self, index: int) -> None:
-        if index < 0 or index >= len(self.namespaces):
+        ns = self._item_by_row_index(index)
+        if not isinstance(ns, NamespaceSummary):
             return
-        namespace = self.namespaces[index]
 
-        self._command_namespace(namespace.name)
+        self._command_namespace(ns.name)
         self.current_view = ExplorerView.PODS
         self.refresh_current_view()
 
@@ -2527,9 +2535,12 @@ class KunoApp(App[None]):
                 self._sort_column = None
                 self._sort_reverse = False
         if self._sort_column:
-            self.notify(f"Sort: {self._sort_column} {'desc' if self._sort_reverse else 'asc'}")
+            self.notify(
+                f"Sort: {self._sort_column} {'desc' if self._sort_reverse else 'asc'}",
+                timeout=4,
+            )
         else:
-            self.notify("Sort: default")
+            self.notify("Sort: default", timeout=4)
         self._apply_sort()
         self._refresh_sorted_table()
 
@@ -2642,15 +2653,18 @@ class KunoApp(App[None]):
             raise ValueError("Startup target is not resolved")
         return self.resolved_startup_config
 
-    def _selected_resource_name(self) -> str | None:
+    def _selected_item(self) -> Any | None:
         pod_table = self.query_one("#pod-table", DataTable)
         cursor_row = pod_table.cursor_row
-        rows = self._current_rows()
-        if cursor_row is None or cursor_row < 0 or cursor_row >= len(rows):
+        if cursor_row is None:
             return None
+        return self._item_by_row_index(cursor_row)
 
-        row = rows[cursor_row]
-        return getattr(row, "name", None) if isinstance(getattr(row, "name", None), str) else None
+    def _selected_resource_name(self) -> str | None:
+        item = self._selected_item()
+        if item is None:
+            return None
+        return getattr(item, "name", None) if isinstance(getattr(item, "name", None), str) else None
 
     def _can_delete_selected(self) -> bool:
         return self.current_view in {
@@ -2681,42 +2695,42 @@ class KunoApp(App[None]):
         )
 
     def _selected_logs_source(self) -> PodSource | WorkloadSource | None:
-        pod_table = self.query_one("#pod-table", DataTable)
-        cursor_row = pod_table.cursor_row
-        if cursor_row is None or cursor_row < 0:
+        item = self._selected_item()
+        if item is None:
             return None
         if self.current_view is ExplorerView.PODS:
-            if cursor_row >= len(self.pods):
-                return None
-            return PodSource(pod_name=self.pods[cursor_row].name)
+            pod = item  # item() returns untyped Any
+            if isinstance(pod, PodSummary):
+                return PodSource(pod_name=pod.name)
+            return None
         if self.current_view is ExplorerView.CONTAINERS:
-            if cursor_row >= len(self.containers):
-                return None
-            container = self.containers[cursor_row]
-            return PodSource(
-                pod_name=container.pod,
-                container_name=container.name,
-            )
+            container = item
+            if isinstance(container, ContainerSummary):
+                return PodSource(
+                    pod_name=container.pod,
+                    container_name=container.name,
+                )
+            return None
         if self.current_view is ExplorerView.DEPLOYMENTS:
-            if cursor_row >= len(self.deployments):
-                return None
-            deployment = self.deployments[cursor_row]
-            return WorkloadSource(
-                kind="deployment",
-                name=deployment.name,
-                pod_names=[],
-                namespace=self._require_target().namespace or "",
-            )
+            deployment = item
+            if isinstance(deployment, DeploymentSummary):
+                return WorkloadSource(
+                    kind="deployment",
+                    name=deployment.name,
+                    pod_names=[],
+                    namespace=self._require_target().namespace or "",
+                )
+            return None
         if self.current_view is ExplorerView.STATEFULSETS:
-            if cursor_row >= len(self.statefulsets):
-                return None
-            sts = self.statefulsets[cursor_row]
-            return WorkloadSource(
-                kind="statefulset",
-                name=sts.name,
-                pod_names=[],
-                namespace=self._require_target().namespace or "",
-            )
+            sts = item
+            if isinstance(sts, StatefulSetSummary):
+                return WorkloadSource(
+                    kind="statefulset",
+                    name=sts.name,
+                    pod_names=[],
+                    namespace=self._require_target().namespace or "",
+                )
+            return None
         return None
 
     def _update_command_suggestions(self, raw: str) -> None:
@@ -2767,16 +2781,34 @@ class KunoApp(App[None]):
         pod_table = self.query_one("#pod-table", DataTable)
         if index < 0 or index >= pod_table.row_count:
             return None
-        # DataTable stores row keys in a TwoWayDict: index -> RowKey
-        row_key = pod_table._row_locations.get_key(index)
-        if row_key is None:
+        key_str = self._row_key_at_index(index)
+        if key_str is None:
             return None
-        key_str = row_key.value  # RowKey has .value attribute
         rows = self._current_rows()
         for row in rows:
             if self._key_fn()(row) == key_str:
                 return row
         return None
+
+    def _row_key_at_index(self, index: int | None) -> str | None:
+        if index is None:
+            return None
+        pod_table = self.query_one("#pod-table", DataTable)
+        if index < 0 or index >= pod_table.row_count:
+            return None
+        # DataTable stores row keys in a TwoWayDict: index -> RowKey.
+        row_key = pod_table._row_locations.get_key(index)
+        if row_key is None:
+            return None
+        return str(row_key.value)
+
+    def _move_cursor_to_key(self, key: str) -> bool:
+        pod_table = self.query_one("#pod-table", DataTable)
+        for row_index in range(pod_table.row_count):
+            if self._row_key_at_index(row_index) == key:
+                pod_table.move_cursor(row=row_index, animate=False)
+                return True
+        return False
 
     def _update_pod_details(self, index: int | None) -> None:
         pod_details = self.query_one("#pod-details", Static)
