@@ -416,7 +416,7 @@ async def test_app_can_go_back_from_pods_to_namespaces(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_app_renders_container_details(monkeypatch) -> None:
+async def test_app_renders_container_info(monkeypatch) -> None:
     def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
         return startup_config
 
@@ -473,11 +473,13 @@ async def test_app_renders_container_details(monkeypatch) -> None:
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
-        await pilot.press("d")
         await pilot.pause()
-        pod_details = app.query_one("#pod-details", Static)
+        await pilot.pause()
+        await pilot.press("i")
+        await pilot.pause()
+        pod_info = app.query_one("#pod-info", Static)
         assert (
-            pod_details.content
+            pod_info.content
             == "container\nname: api\npod: api-1\nready: yes\nstate: Running\nrestarts: 1\nimage: ghcr.io/example/api:1.0.0\ncpu: 250m\nmemory: 128Mi"
         )
 
@@ -1254,12 +1256,12 @@ async def test_app_renders_startup_summary(monkeypatch) -> None:
         await pilot.pause()
         status_line = app.query_one("#status-line", Static)
         pod_table = app.query_one("#pod-table", DataTable)
-        details_panel = app.query_one("#details-panel", VerticalScroll)
-        pod_details = app.query_one("#pod-details", Static)
+        info_panel = app.query_one("#info-panel", VerticalScroll)
+        pod_details = app.query_one("#pod-info", Static)
         assert "prod" in str(status_line.content)
         assert "payments" in str(status_line.content)
         assert pod_table.row_count == 1
-        assert details_panel.display is False
+        assert info_panel.display is False
         details = str(pod_details.content)
         assert "pod/api-1" in details
         assert "Status\nphase: Running" in details
@@ -1278,7 +1280,7 @@ async def test_app_renders_startup_error(monkeypatch) -> None:
 
     async with app.run_test():
         status_line = app.query_one("#status-line", Static)
-        pod_details = app.query_one("#pod-details", Static)
+        pod_details = app.query_one("#pod-info", Static)
         assert "Error:" in str(status_line.content)
         assert pod_details.content == "pod\n(startup failed)"
 
@@ -1313,7 +1315,7 @@ async def test_app_renders_pod_loading_error(monkeypatch) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         pod_table = app.query_one("#pod-table", DataTable)
-        pod_details = app.query_one("#pod-details", Static)
+        pod_details = app.query_one("#pod-info", Static)
         assert pod_table.row_count == 0
         assert pod_details.content == "pod\n(error: boom)"
 
@@ -1369,11 +1371,11 @@ async def test_app_updates_details_for_highlighted_pod(monkeypatch) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         pod_table = app.query_one("#pod-table", DataTable)
-        details_panel = app.query_one("#details-panel", VerticalScroll)
-        pod_details = app.query_one("#pod-details", Static)
-        await pilot.press("d")
+        info_panel = app.query_one("#info-panel", VerticalScroll)
+        pod_details = app.query_one("#pod-info", Static)
+        await pilot.press("i")
         await pilot.pause()
-        assert details_panel.display is True
+        assert info_panel.display is True
         pod_table.focus()
         await pilot.press("down")
         await pilot.pause()
@@ -1385,7 +1387,7 @@ async def test_app_updates_details_for_highlighted_pod(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_app_toggles_details_panel(monkeypatch) -> None:
+async def test_app_toggles_info_panel(monkeypatch) -> None:
     def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
         return startup_config
 
@@ -1423,14 +1425,14 @@ async def test_app_toggles_details_panel(monkeypatch) -> None:
 
     async with app.run_test() as pilot:
         await pilot.pause()
-        details_panel = app.query_one("#details-panel", VerticalScroll)
-        assert details_panel.display is False
-        await pilot.press("d")
+        info_panel = app.query_one("#info-panel", VerticalScroll)
+        assert info_panel.display is False
+        await pilot.press("i")
         await pilot.pause()
-        assert details_panel.display is True
-        await pilot.press("d")
+        assert info_panel.display is True
+        await pilot.press("i")
         await pilot.pause()
-        assert details_panel.display is False
+        assert info_panel.display is False
 
 
 @pytest.mark.asyncio
@@ -1751,11 +1753,11 @@ async def test_app_switches_to_deployments_view(monkeypatch) -> None:
         app.execute_command("deploy")
         await pilot.pause()
         pod_panel = app.query_one("#pod-panel", Vertical)
-        details_panel = app.query_one("#details-panel", VerticalScroll)
+        info_panel = app.query_one("#info-panel", VerticalScroll)
         pod_table = app.query_one("#pod-table", DataTable)
         assert app.current_view is ExplorerView.DEPLOYMENTS
         assert pod_panel.border_title == "Deployments"
-        assert details_panel.border_title == "Deployment Details"
+        assert info_panel.border_title == "Deployment Info"
         assert pod_table.row_count == 1
 
 
@@ -1804,9 +1806,9 @@ async def test_app_renders_deployment_details(monkeypatch) -> None:
         await pilot.pause()
         app.execute_command("deploy")
         await pilot.pause()
-        await pilot.press("d")
+        await pilot.press("i")
         await pilot.pause()
-        pod_details = app.query_one("#pod-details", Static)
+        pod_details = app.query_one("#pod-info", Static)
         assert (
             pod_details.content
             == "deployment\nname: api\nready: 2/3\nup-to-date: 3\navailable: 2\nage: 1h\ncontainers: api,sidecar\ncpu: 750m\nmemory: 384Mi"
@@ -1867,11 +1869,11 @@ async def test_app_switches_to_statefulsets_view(monkeypatch) -> None:
         app.execute_command("sts")
         await pilot.pause()
         pod_panel = app.query_one("#pod-panel", Vertical)
-        details_panel = app.query_one("#details-panel", VerticalScroll)
+        info_panel = app.query_one("#info-panel", VerticalScroll)
         pod_table = app.query_one("#pod-table", DataTable)
         assert app.current_view is ExplorerView.STATEFULSETS
         assert pod_panel.border_title == "StatefulSets"
-        assert details_panel.border_title == "StatefulSet Details"
+        assert info_panel.border_title == "StatefulSet Info"
         assert pod_table.row_count == 1
 
 
@@ -1926,9 +1928,9 @@ async def test_app_renders_statefulset_details(monkeypatch) -> None:
         await pilot.pause()
         app.execute_command("sts")
         await pilot.pause()
-        await pilot.press("d")
+        await pilot.press("i")
         await pilot.pause()
-        pod_details = app.query_one("#pod-details", Static)
+        pod_details = app.query_one("#pod-info", Static)
         assert (
             pod_details.content
             == "statefulset\nname: postgres\nready: 2/3\nupdated: 2\ncurrent: 3\nage: 1h\ncontainers: postgres\ncpu: 500m\nmemory: 1Gi"
@@ -1993,11 +1995,11 @@ async def test_app_switches_to_services_view(monkeypatch) -> None:
         app.execute_command("svc")
         await pilot.pause()
         pod_panel = app.query_one("#pod-panel", Vertical)
-        details_panel = app.query_one("#details-panel", VerticalScroll)
+        info_panel = app.query_one("#info-panel", VerticalScroll)
         pod_table = app.query_one("#pod-table", DataTable)
         assert app.current_view is ExplorerView.SERVICES
         assert pod_panel.border_title == "Services"
-        assert details_panel.border_title == "Service Details"
+        assert info_panel.border_title == "Service Info"
         assert pod_table.row_count == 1
 
 
@@ -2056,9 +2058,9 @@ async def test_app_renders_service_details(monkeypatch) -> None:
         await pilot.pause()
         app.execute_command("svc")
         await pilot.pause()
-        await pilot.press("d")
+        await pilot.press("i")
         await pilot.pause()
-        pod_details = app.query_one("#pod-details", Static)
+        pod_details = app.query_one("#pod-info", Static)
         assert (
             pod_details.content
             == "service\nname: api\ntype: ClusterIP\ncluster-ip: 10.0.0.1\nports: 80/TCP,443/TCP\nage: 1h\nselector: app=api,tier=backend"
@@ -2128,11 +2130,11 @@ async def test_app_switches_to_pvc_view(monkeypatch) -> None:
         app.execute_command("pvc")
         await pilot.pause()
         pod_panel = app.query_one("#pod-panel", Vertical)
-        details_panel = app.query_one("#details-panel", VerticalScroll)
+        info_panel = app.query_one("#info-panel", VerticalScroll)
         pod_table = app.query_one("#pod-table", DataTable)
         assert app.current_view is ExplorerView.PVC
         assert pod_panel.border_title == "PVC"
-        assert details_panel.border_title == "PVC Details"
+        assert info_panel.border_title == "PVC Info"
         assert pod_table.row_count == 1
 
 
@@ -2196,9 +2198,9 @@ async def test_app_renders_pvc_details(monkeypatch) -> None:
         await pilot.pause()
         app.execute_command("pvc")
         await pilot.pause()
-        await pilot.press("d")
+        await pilot.press("i")
         await pilot.pause()
-        pod_details = app.query_one("#pod-details", Static)
+        pod_details = app.query_one("#pod-info", Static)
         assert (
             pod_details.content
             == "pvc\nname: data-postgres-0\nstatus: Bound\nvolume: pvc-123\ncapacity: 10Gi\naccess: ReadWriteOnce\nstorage-class: fast-ssd\nage: 1h"
@@ -2270,11 +2272,11 @@ async def test_app_switches_to_secrets_view(monkeypatch) -> None:
         app.execute_command("secrets")
         await pilot.pause()
         pod_panel = app.query_one("#pod-panel", Vertical)
-        details_panel = app.query_one("#details-panel", VerticalScroll)
+        info_panel = app.query_one("#info-panel", VerticalScroll)
         pod_table = app.query_one("#pod-table", DataTable)
         assert app.current_view is ExplorerView.SECRETS
         assert pod_panel.border_title == "Secrets"
-        assert details_panel.border_title == "Secret Details"
+        assert info_panel.border_title == "Secret Info"
         assert pod_table.row_count == 1
 
 
@@ -2340,9 +2342,9 @@ async def test_app_renders_secret_details(monkeypatch) -> None:
         await pilot.pause()
         app.execute_command("secrets")
         await pilot.pause()
-        await pilot.press("d")
+        await pilot.press("i")
         await pilot.pause()
-        pod_details = app.query_one("#pod-details", Static)
+        pod_details = app.query_one("#pod-info", Static)
         assert (
             pod_details.content
             == "secret\nname: app-secrets\ntype: Opaque\ndata-items: 2\nimmutable: yes\nage: 1h"
@@ -2529,8 +2531,26 @@ async def test_containers_view_logs_selects_correct_container(monkeypatch) -> No
     ) -> list[ContainerSummary]:
         if pod_name == "api-1":
             return [
-                ContainerSummary(name="api", pod="api-1", ready="yes", state="Running", restarts=0, image="api:v1", cpu="250m", memory="128Mi"),
-                ContainerSummary(name="sidecar", pod="api-1", ready="yes", state="Running", restarts=1, image="envoy:v1", cpu="100m", memory="64Mi"),
+                ContainerSummary(
+                    name="api",
+                    pod="api-1",
+                    ready="yes",
+                    state="Running",
+                    restarts=0,
+                    image="api:v1",
+                    cpu="250m",
+                    memory="128Mi",
+                ),
+                ContainerSummary(
+                    name="sidecar",
+                    pod="api-1",
+                    ready="yes",
+                    state="Running",
+                    restarts=1,
+                    image="envoy:v1",
+                    cpu="100m",
+                    memory="64Mi",
+                ),
             ]
         return []
 
