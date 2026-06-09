@@ -80,6 +80,15 @@ from kuno.models import (
 from kuno.system_theme import Palette, build_system_theme
 from kuno.table_sync import ColumnDef, TableSync
 
+SPLASH_LOGO = r"""
+██╗  ██╗██╗   ██╗███╗   ██╗ ██████╗
+██║ ██╔╝██║   ██║████╗  ██║██╔═══██╗
+█████╔╝ ██║   ██║██╔██╗ ██║██║   ██║
+██╔═██╗ ██║   ██║██║╚██╗██║██║   ██║
+██║  ██╗╚██████╔╝██║ ╚████║╚██████╔╝
+╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝
+"""
+
 
 class AboutScreen(ModalScreen[None]):
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("escape", "close", "Close")]
@@ -94,6 +103,39 @@ class AboutScreen(ModalScreen[None]):
 
     def action_close(self) -> None:
         self.dismiss(None)
+
+
+class SplashScreen(Screen):
+    DEFAULT_CSS = """
+    SplashScreen {
+        align: center middle;
+        background: $surface;
+    }
+    #splash-logo {
+        text-align: center;
+        color: $primary;
+    }
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._ready = False
+        self._shown_at = 0.0
+
+    def compose(self) -> ComposeResult:
+        yield Static(SPLASH_LOGO, id="splash-logo")
+
+    def on_mount(self) -> None:
+        self._shown_at = time.monotonic()
+
+    def mark_ready(self) -> None:
+        self._ready = True
+        elapsed = time.monotonic() - self._shown_at
+        remaining = max(0.0, 0.5 - elapsed)
+        if remaining > 0:
+            self.set_timer(remaining, self.dismiss)
+        else:
+            self.dismiss()
 
 
 class ConfirmActionScreen(ModalScreen[bool]):
@@ -1398,6 +1440,7 @@ class KunoApp(App[None]):
         self.statefulsets: list[StatefulSetSummary] = []
         self.resolved_startup_config: StartupConfig | None = None
         self._pending_single_container_check = False
+        self.splash = SplashScreen()
         self.debug_enabled = False
         # Smart table refresh state
         self._table_sync: TableSync | None = None
@@ -1433,6 +1476,7 @@ class KunoApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
+        self.push_screen(self.splash)
         self._dblog("on_mount start")
         system_theme = build_system_theme(self._terminal_palette)
         self.register_theme(system_theme)
@@ -1464,11 +1508,12 @@ class KunoApp(App[None]):
             self._dblog(f"UnknownContextError: {error}")
             self.query_one("#status-line", Static).update(f"Error: {error}")
             pod_info.update("pod\n(startup failed)")
+            if self.splash:
+                self.splash.mark_ready()
             return
 
         self._update_status_line()
         self._update_breadcrumb()
-        self._dblog("calling refresh_current_view")
         self.refresh_current_view()
         self.set_interval(2, self.refresh_current_view)
         self._dblog("on_mount done")
@@ -1632,6 +1677,9 @@ class KunoApp(App[None]):
             self._update_pod_info(self.query_one("#pod-table", DataTable).cursor_row)
         else:
             pod_info.update(f"{self._view_singular()}\n(no {self.current_view.value} found)")
+
+        if self.splash is not None and self.splash.is_attached:
+            self.splash.mark_ready()
 
         if self._pending_single_container_check and self.current_view is ExplorerView.CONTAINERS:
             self._pending_single_container_check = False

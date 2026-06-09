@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from kuno.app import KunoApp
+from kuno.app import SPLASH_LOGO, KunoApp
 from kuno.config import KunoConfig, load_config, merge_startup_config
 from kuno.models import StartupConfig
 from kuno.system_theme import query_terminal_palette
@@ -74,6 +74,7 @@ def main(argv: Sequence[str] | None = None, config: KunoConfig | None = None) ->
         _dblog(f"startup={startup_config}")
         _dblog(f"theme={kuno_config.theme}")
     app.run()
+    print(SPLASH_LOGO)
     return 0
 
 
