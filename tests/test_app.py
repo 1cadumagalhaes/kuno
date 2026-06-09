@@ -65,7 +65,7 @@ async def test_app_starts_in_pods_view(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_namespaces", fake_list_namespaces)
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -118,7 +118,7 @@ async def test_app_selecting_context_opens_namespaces(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_namespaces", fake_list_namespaces)
     monkeypatch.setattr("kuno.app.list_namespace_summaries", fake_list_namespace_summaries)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
     app.current_view = ExplorerView.CONTEXTS
 
     async with app.run_test() as pilot:
@@ -187,7 +187,7 @@ async def test_app_selecting_namespace_opens_pods(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_namespace_summaries", fake_list_namespace_summaries)
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
     app.current_view = ExplorerView.CONTEXTS
 
     async with app.run_test() as pilot:
@@ -255,7 +255,7 @@ async def test_app_selecting_pod_opens_containers(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
     monkeypatch.setattr("kuno.app.list_pod_containers", fake_list_pod_containers)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
     app.current_view = ExplorerView.PODS
 
     async with app.run_test() as pilot:
@@ -331,7 +331,7 @@ async def test_app_can_go_back_from_containers_to_pods(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
     monkeypatch.setattr("kuno.app.list_pod_containers", fake_list_pod_containers)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
     app.current_view = ExplorerView.PODS
 
     async with app.run_test() as pilot:
@@ -400,7 +400,7 @@ async def test_app_can_go_back_from_pods_to_namespaces(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_namespace_summaries", fake_list_namespace_summaries)
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
     app.current_view = ExplorerView.CONTEXTS
 
     async with app.run_test() as pilot:
@@ -466,7 +466,7 @@ async def test_app_renders_container_info(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
     monkeypatch.setattr("kuno.app.list_pod_containers", fake_list_pod_containers)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
     app.current_view = ExplorerView.PODS
 
     async with app.run_test() as pilot:
@@ -518,7 +518,7 @@ async def test_app_delete_command_opens_confirmation_for_pod(monkeypatch) -> Non
     monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
     app.current_view = ExplorerView.PODS
 
     async with app.run_test() as pilot:
@@ -565,7 +565,7 @@ async def test_app_restart_command_opens_confirmation_for_deployment(monkeypatch
     monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
     monkeypatch.setattr("kuno.app.list_deployments", fake_list_deployments)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
     app.current_view = ExplorerView.DEPLOYMENTS
 
     async with app.run_test() as pilot:
@@ -610,7 +610,7 @@ async def test_app_opens_logs_from_selected_pod(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
     app.current_view = ExplorerView.PODS
 
     async with app.run_test() as pilot:
@@ -656,7 +656,7 @@ async def test_app_opens_logs_from_selected_container(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
     monkeypatch.setattr("kuno.app.list_pod_containers", fake_list_pod_containers)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
     app.current_view = ExplorerView.CONTAINERS
     app.container_pod_name = "api-1"
 
@@ -723,7 +723,7 @@ async def test_logs_screen_filters_lines(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_pod_containers", fake_list_pod_containers)
     monkeypatch.setattr("kuno.app.read_pod_logs", fake_read_pod_logs)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
     app.current_view = ExplorerView.CONTAINERS
     app.container_pod_name = "api-1"
 
@@ -789,7 +789,7 @@ async def test_logs_screen_starts_selected_at_last_line(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_pod_containers", fake_list_pod_containers)
     monkeypatch.setattr("kuno.app.read_pod_logs", fake_read_pod_logs)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
     app.current_view = ExplorerView.CONTAINERS
     app.container_pod_name = "api-1"
 
@@ -851,7 +851,7 @@ async def test_logs_navigation_turns_off_follow(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_pod_containers", fake_list_pod_containers)
     monkeypatch.setattr("kuno.app.read_pod_logs", fake_read_pod_logs)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
     app.current_view = ExplorerView.CONTAINERS
     app.container_pod_name = "api-1"
 
@@ -922,7 +922,7 @@ async def test_logs_screen_toggles_timestamps_and_wrap(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_pod_containers", fake_list_pod_containers)
     monkeypatch.setattr("kuno.app.read_pod_logs", fake_read_pod_logs)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
     app.current_view = ExplorerView.CONTAINERS
     app.container_pod_name = "api-1"
 
@@ -990,7 +990,7 @@ async def test_logs_screen_cycles_modes(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_pod_containers", fake_list_pod_containers)
     monkeypatch.setattr("kuno.app.read_pod_logs", fake_read_pod_logs)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
     app.current_view = ExplorerView.CONTAINERS
     app.container_pod_name = "api-1"
 
@@ -1062,7 +1062,7 @@ async def test_logs_screen_refetches_with_since(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_pod_containers", fake_list_pod_containers)
     monkeypatch.setattr("kuno.app.read_pod_logs", fake_read_pod_logs)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
     app.current_view = ExplorerView.CONTAINERS
     app.container_pod_name = "api-1"
 
@@ -1128,7 +1128,7 @@ async def test_logs_screen_toggles_line_detail_panel(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_pod_containers", fake_list_pod_containers)
     monkeypatch.setattr("kuno.app.read_pod_logs", fake_read_pod_logs)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
     app.current_view = ExplorerView.CONTAINERS
     app.container_pod_name = "api-1"
 
@@ -1197,7 +1197,7 @@ async def test_logs_screen_supports_mouse_selection(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_pod_containers", fake_list_pod_containers)
     monkeypatch.setattr("kuno.app.read_pod_logs", fake_read_pod_logs)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
     app.current_view = ExplorerView.CONTAINERS
     app.container_pod_name = "api-1"
 
@@ -1249,7 +1249,7 @@ async def test_app_renders_startup_summary(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
     app.current_view = ExplorerView.PODS
 
     async with app.run_test() as pilot:
@@ -1276,7 +1276,7 @@ async def test_app_renders_startup_error(monkeypatch) -> None:
 
     monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
 
     async with app.run_test():
         status_line = app.query_one("#status-line", Static)
@@ -1309,7 +1309,7 @@ async def test_app_renders_pod_loading_error(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
     app.current_view = ExplorerView.PODS
 
     async with app.run_test() as pilot:
@@ -1365,7 +1365,7 @@ async def test_app_updates_details_for_highlighted_pod(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
     app.current_view = ExplorerView.PODS
 
     async with app.run_test() as pilot:
@@ -1421,7 +1421,7 @@ async def test_app_toggles_info_panel(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1459,7 +1459,7 @@ async def test_app_opens_command_bar(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1498,7 +1498,7 @@ async def test_app_closes_command_bar(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1540,7 +1540,7 @@ async def test_app_updates_command_suggestions(monkeypatch) -> None:
 
     monkeypatch.setattr("kuno.app.list_namespaces", fake_list_namespaces)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1583,7 +1583,7 @@ async def test_app_accepts_command_suggestion(monkeypatch) -> None:
 
     monkeypatch.setattr("kuno.app.list_namespaces", fake_list_namespaces)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1624,7 +1624,7 @@ async def test_app_submits_selected_command_suggestion_with_enter(monkeypatch) -
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
     monkeypatch.setattr("kuno.app.list_namespaces", fake_list_namespaces)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1660,7 +1660,7 @@ async def test_app_opens_about_screen_from_command(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1696,7 +1696,7 @@ async def test_app_executes_theme_command(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1746,7 +1746,7 @@ async def test_app_switches_to_deployments_view(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
     monkeypatch.setattr("kuno.app.list_deployments", fake_list_deployments)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1800,7 +1800,7 @@ async def test_app_renders_deployment_details(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
     monkeypatch.setattr("kuno.app.list_deployments", fake_list_deployments)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1862,7 +1862,7 @@ async def test_app_switches_to_statefulsets_view(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_deployments", fake_list_deployments)
     monkeypatch.setattr("kuno.app.list_statefulsets", fake_list_statefulsets)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1922,7 +1922,7 @@ async def test_app_renders_statefulset_details(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_deployments", fake_list_deployments)
     monkeypatch.setattr("kuno.app.list_statefulsets", fake_list_statefulsets)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -1988,7 +1988,7 @@ async def test_app_switches_to_services_view(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_statefulsets", fake_list_statefulsets)
     monkeypatch.setattr("kuno.app.list_services", fake_list_services)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -2052,7 +2052,7 @@ async def test_app_renders_service_details(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_statefulsets", fake_list_statefulsets)
     monkeypatch.setattr("kuno.app.list_services", fake_list_services)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -2123,7 +2123,7 @@ async def test_app_switches_to_pvc_view(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_services", fake_list_services)
     monkeypatch.setattr("kuno.app.list_pvcs", fake_list_pvcs)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -2192,7 +2192,7 @@ async def test_app_renders_pvc_details(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_services", fake_list_services)
     monkeypatch.setattr("kuno.app.list_pvcs", fake_list_pvcs)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -2265,7 +2265,7 @@ async def test_app_switches_to_secrets_view(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_pvcs", fake_list_pvcs)
     monkeypatch.setattr("kuno.app.list_secrets", fake_list_secrets)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -2336,7 +2336,7 @@ async def test_app_renders_secret_details(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_pvcs", fake_list_pvcs)
     monkeypatch.setattr("kuno.app.list_secrets", fake_list_secrets)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -2378,7 +2378,7 @@ async def test_app_exposes_clean_system_commands(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
     monkeypatch.setattr("kuno.app.list_namespaces", fake_list_namespaces)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -2424,7 +2424,7 @@ async def test_app_scrolls_command_suggestions(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
     monkeypatch.setattr("kuno.app.list_namespaces", fake_list_namespaces)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -2474,7 +2474,7 @@ async def test_app_executes_namespace_command(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
 
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -2558,7 +2558,7 @@ async def test_containers_view_logs_selects_correct_container(monkeypatch) -> No
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
     monkeypatch.setattr("kuno.app.list_pod_containers", fake_list_pod_containers)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
     app.current_view = ExplorerView.PODS
 
     async with app.run_test() as pilot:
@@ -2640,7 +2640,7 @@ async def test_refresh_preserves_selected_pod_by_key(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
 
-    app = KunoApp(StartupConfig(context="prod", namespace="payments"))
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
 
     async with app.run_test() as pilot:
         await pilot.pause()

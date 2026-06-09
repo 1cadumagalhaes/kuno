@@ -1414,11 +1414,14 @@ class KunoApp(App[None]):
         startup_config: StartupConfig,
         kuno_config: KunoConfig | None = None,
         terminal_palette: Palette | None = None,
+        *,  # keyword-only to avoid confusion
+        show_splash: bool = True,
     ) -> None:
         super().__init__()
         self.kuno_config = (
             kuno_config if kuno_config is not None else KunoConfig(path=DEFAULT_CONFIG_PATH)
         )
+        self.show_splash = show_splash
         self._terminal_palette = terminal_palette
         self.available_contexts: list[str] = []
         self.available_namespaces: list[str] = []
@@ -1440,7 +1443,7 @@ class KunoApp(App[None]):
         self.statefulsets: list[StatefulSetSummary] = []
         self.resolved_startup_config: StartupConfig | None = None
         self._pending_single_container_check = False
-        self.splash = SplashScreen()
+        self.splash: SplashScreen | None = SplashScreen() if show_splash else None
         self.debug_enabled = False
         # Smart table refresh state
         self._table_sync: TableSync | None = None
@@ -1476,7 +1479,8 @@ class KunoApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.push_screen(self.splash)
+        if self.splash:
+            self.push_screen(self.splash)
         self._dblog("on_mount start")
         system_theme = build_system_theme(self._terminal_palette)
         self.register_theme(system_theme)
