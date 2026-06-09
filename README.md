@@ -20,7 +20,8 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 uv tool install kuno
 ```
 
-> kuno requires Python 3.14+. If your system Python is older, uv automatically downloads a compatible interpreter.
+> kuno requires Python 3.11+ and uses `match`/`case` syntax. If your system
+> Python is older, `uv tool install` automatically downloads a compatible interpreter.
 
 Then run:
 

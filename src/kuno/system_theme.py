@@ -40,7 +40,7 @@ def _query_single_osc(fd: int, query: bytes, timeout: float = 0.6) -> bytes | No
             break
         try:
             chunk = os.read(fd, 1)
-        except OSError, BlockingIOError:
+        except (OSError, BlockingIOError):
             break
         if not chunk:
             break
@@ -66,7 +66,7 @@ def _drain(fd: int, timeout: float = 0.15) -> bytes:
             if not chunk:
                 break
             drained += chunk
-        except OSError, BlockingIOError:
+        except (OSError, BlockingIOError):
             break
         time.sleep(0.01)
     return drained
@@ -127,7 +127,7 @@ def query_terminal_palette() -> Palette | None:
     fd = sys.stdin.fileno()
     try:
         tb = termios.tcgetattr(fd)
-    except termios.error, OSError:
+    except (termios.error, OSError):
         return None
     tty.setraw(fd)
     try:
@@ -151,7 +151,7 @@ def query_terminal_palette() -> Palette | None:
                 break
             try:
                 chunk = os.read(fd, 1)
-            except OSError, BlockingIOError:
+            except (OSError, BlockingIOError):
                 break
             if not chunk:
                 break
