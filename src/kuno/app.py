@@ -378,9 +378,16 @@ class LogsScreen(Screen[None]):
         self.filter_text = ""
         self._render_logs()
 
-    def action_copy_logs(self) -> None:
-        self.app.copy_to_clipboard("\n".join(self._display_lines_plain()))
-        self.notify("Copied logs")
+    def action_copy_selection(self) -> None:
+        output = self.query_one("#logs-output", LogView)
+        selection = output.text_selection
+        if selection is not None and selection.start is not None and selection.end is not None:
+            result = output.get_log_selection(selection)
+            if result:
+                self.app.copy_to_clipboard(result[0])
+                self.notify("Copied selection")
+                return
+        self.notify("No selection to copy", severity="warning")
 
     def action_next_line(self) -> None:
         if self.follow_enabled:
@@ -1340,10 +1347,15 @@ class KunoApp(App[None]):
     MAX_COMMAND_SUGGESTIONS = 4
     BINDINGS: ClassVar[list[tuple[str, str, str] | Binding]] = [
         ("backspace", "go_back", "Back"),
-        ("ctrl+d", "describe_selected", "Describe"),
-        ("d", "toggle_details", "Details"),
+        ("d", "describe_selected", "Describe"),
+        ("i", "toggle_info", "Info"),
+        ("ctrl+d", "delete_selected", "Delete"),
+        ("ctrl+r", "restart_selected", "Restart"),
         ("ctrl+e", "events_selected", "Events"),
-        ("ctrl+l", "open_logs", "Logs"),
+        ("L", "open_logs", "Logs"),
+        ("l", "open_logs", ""),
+        ("C", "open_contexts", "Contexts"),
+        ("N", "open_namespaces", "Namespaces"),
         Binding("j", "next_row", "Down", show=False),
         Binding("k", "previous_row", "Up", show=False),
         Binding("g", "jump_top", "Top", show=False),
