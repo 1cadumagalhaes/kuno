@@ -20,6 +20,8 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 uv tool install kuno
 ```
 
+> kuno requires Python 3.14+. If your system Python is older, uv automatically downloads a compatible interpreter.
+
 Then run:
 
 ```sh
@@ -57,10 +59,8 @@ kuno [-c CONTEXT] [-n NAMESPACE] [-d]
 
 `j` / `k` or arrow keys move through the resource list. `g` / `G` jump to top and bottom.
 
-Press `:` to open the command palette. Most features are commands:
+Press `:` to open the command bar, or `ctrl+p` for the Textual system command palette.
 
-| command | description |
-|---|---|
 ### Key Bindings (main explorer)
 
 | Key | Action |
@@ -131,8 +131,6 @@ Press `:` to open the command palette. Most features are commands:
 ### Manifest / Describe Screens
 
 `/` toggles search. `[` and `]` jump between YAML keys at any nesting level.
-
-In the manifest and describe screens, `/` also toggles search. `[` and `]` jump between YAML keys at any nesting level.
 
 ## Configuration
 
