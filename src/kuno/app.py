@@ -107,8 +107,8 @@ class ConfirmActionScreen(ModalScreen[bool]):
             yield Static(self.dialog_title, id="confirm-title")
             yield Static(self.message, id="confirm-message")
             with Horizontal(id="confirm-actions"):
-                yield Button("Confirm", id="confirm-yes", variant="error")
                 yield Button("Cancel", id="confirm-no")
+                yield Button("Confirm", id="confirm-yes", variant="error")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss(event.button.id == "confirm-yes")
@@ -573,7 +573,7 @@ class LogsScreen(Screen[None]):
         visible = self._visible_log_indices()
         shown = len(visible)
 
-        status_parts: list[str] = [_format_status_text(self.app)]  # type: ignore[arg-type]
+        status_parts: list[str] = [_format_status_text(cast(KunoApp, self.app))]
         if self.filter_text:
             status_parts.append(f"filter: {self.filter_text!r}")
         elif shown < total:
@@ -1386,7 +1386,7 @@ class KunoApp(App[None]):
         self.containers: list[ContainerSummary] = []
         self.contexts: list[ContextSummary] = []
         self.current_view = ExplorerView.PODS
-        self.details_visible = False
+        self.info_visible = False
         self.container_pod_name: str | None = None
         self.namespaces: list[NamespaceSummary] = []
         self.startup_config = startup_config
@@ -1423,8 +1423,8 @@ class KunoApp(App[None]):
         with Horizontal(id="explorer"):
             with Vertical(id="pod-panel"):
                 yield DataTable(id="pod-table")
-            with VerticalScroll(id="details-panel"):
-                yield Static(f"{self._view_singular()}\n(loading)", id="pod-details")
+            with VerticalScroll(id="info-panel"):
+                yield Static(f"{self._view_singular()}\n(loading)", id="pod-info")
         with Vertical(id="command-area"):
             with Horizontal(id="command-bar"):
                 yield Static(":", id="command-prefix")
