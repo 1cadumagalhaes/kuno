@@ -12,6 +12,6 @@ def mock_kube_config(monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
     monkeypatch.setattr(
-        "kubernetes_asyncio.config.list_kube_config_contexts",
+        "kuno.k8s.config.list_kube_config_contexts",
         fake_list_kube_config_contexts,
     )
