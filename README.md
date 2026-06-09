@@ -61,27 +61,76 @@ Press `:` to open the command palette. Most features are commands:
 
 | command | description |
 |---|---|
-| `:pods` | list pods |
-| `:deployments` | list deployments |
-| `:statefulsets` | list stateful sets |
-| `:services` | list services |
-| `:pvc` | list persistent volume claims |
-| `:secrets` | list secrets |
-| `:contexts` | switch context |
-| `:namespaces` | switch namespace |
+### Key Bindings (main explorer)
+
+| Key | Action |
+|---|---|
+| `j` / `k` or arrows | Navigate list |
+| `g` / `G` | Jump top / bottom |
+| `Enter` | Drill into selected resource |
+| `d` | **Describe** selected resource |
+| `i` | Toggle **Info** side panel |
+| `y` | View **YAML** manifest |
+| `r` | **Refresh** current view |
+| `L` or `l` | Open **Logs** for selected resource |
+| `C` | Jump to **Contexts** view |
+| `N` | Jump to **Namespaces** view |
+| `ctrl+d` | **Delete** selected resource (with confirmation) |
+| `ctrl+r` | **Restart** selected deployment/statefulset (with confirmation) |
+| `ctrl+e` | View **Events** |
+| `ctrl+o` | **Sort** cycle |
+| `Backspace` | Go back |
+| `?` | Show all keybindings |
+| `:` | Open command bar |
+| `ctrl+p` | Textual system command palette |
+
+### `:` Commands
+
+| command | description |
+|---|---|
+| `:pods` / `:containers` | switch to pods / containers |
+| `:deploy` / `:deployments` | switch to deployments view |
+| `:sts` / `:statefulsets` | switch to statefulsets view |
+| `:svc` / `:services` | switch to services view |
+| `:pvc` | switch to PVC view |
+| `:secrets` | switch to secrets view |
+| `:contexts` | switch to contexts view |
+| `:namespaces` / `:ns [name]` / `:namespace [name]` | switch or set namespace |
+| `:ctx <name>` | switch context |
 | `:logs` | open logs for selected resource |
 | `:yaml` | view raw manifest |
 | `:describe` | describe output with inline events |
-| `:events` | namespace-wide events |
-| `:delete` | delete selected resource |
-| `:restart` | rollout restart selected resource |
+| `:events` | view events |
+| `:del` / `:delete` | delete selected resource (with confirmation) |
+| `:restart` | rollout restart selected resource (with confirmation) |
+| `:info` / `:hide-info` | toggle the info side panel |
 | `:config` | open config screen |
-| `:theme NAME` | switch theme |
-| `:keys` | show all keybindings |
+| `:theme [name]` | cycle or set theme |
+| `:help` | show this command list |
 
-`ctrl+p` opens the command palette with the same actions plus context and namespace switching.
+### Logs Screen
 
-Inside the logs screen, `/` toggles a search bar. `n` / `N` cycle matches. `w` toggles line wrapping. `t` toggles timestamps. `f` toggles follow mode.
+| Key | Action |
+|---|---|
+| `y` / `ctrl+c` | Copy text selection (if any) |
+| `d` | Open log detail panel |
+| `f` | Toggle follow mode |
+| `j` / `k` | Previous / next line |
+| `g` / `G` | Jump to top / bottom |
+| `/` | Focus filter input |
+| `s` | Focus since (time) input |
+| `t` | Toggle timestamps |
+| `w` | Toggle line wrapping |
+| `m` | Cycle display mode (raw / structured) |
+| `r` | Reload logs |
+| `ctrl+u` | Clear filter |
+| `n` / `N` | Cycle search matches |
+| `[` / `]` | Previous / next pod (workload views) |
+| `ctrl+h` / `ctrl+l` | Previous / next container |
+
+### Manifest / Describe Screens
+
+`/` toggles search. `[` and `]` jump between YAML keys at any nesting level.
 
 In the manifest and describe screens, `/` also toggles search. `[` and `]` jump between YAML keys at any nesting level.
 
