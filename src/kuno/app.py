@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 from rich.syntax import Syntax
 from rich.text import Text
@@ -119,7 +119,8 @@ class LogsScreen(Screen[None]):
         ("escape", "close", "Back"),
         ("backspace", "close", ""),
         ("d", "open_detail", "Detail"),
-        ("y", "copy_logs", "Copy"),
+        ("y", "copy_selection", "Copy"),
+        ("ctrl+c", "copy_selection", "Copy"),
         ("f", "toggle_follow", "Follow"),
         ("l", "noop", ""),
         ("j", "next_line", "Next"),
@@ -1430,14 +1431,14 @@ class KunoApp(App[None]):
         self.theme = theme
         self._dblog(f"theme set to {self.theme}")
         command_area = self.query_one("#command-area", Vertical)
-        details_panel = self.query_one("#details-panel", VerticalScroll)
+        info_panel = self.query_one("#info-panel", VerticalScroll)
         pod_panel = self.query_one("#pod-panel", Vertical)
         pod_panel.border_title = self._panel_title()
-        details_panel.border_title = self._details_title()
+        info_panel.border_title = self._info_title()
         pod_table = self.query_one("#pod-table", DataTable)
-        pod_details = self.query_one("#pod-details", Static)
+        pod_info = self.query_one("#pod-info", Static)
         command_area.display = self.command_bar_visible
-        details_panel.display = self.details_visible
+        info_panel.display = self.info_visible
         pod_table.focus()
         pod_table.cursor_type = "row"
         pod_table.zebra_stripes = True
@@ -1450,7 +1451,7 @@ class KunoApp(App[None]):
         except UnknownContextError as error:
             self._dblog(f"UnknownContextError: {error}")
             self.query_one("#status-line", Static).update(f"Error: {error}")
-            pod_details.update("pod\n(startup failed)")
+            pod_info.update("pod\n(startup failed)")
             return
 
         self._update_status_line()
@@ -1474,17 +1475,17 @@ class KunoApp(App[None]):
             )
 
     async def _do_refresh_current_view(self) -> None:
-        pod_details = self.query_one("#pod-details", Static)
+        pod_info = self.query_one("#pod-info", Static)
         if self.resolved_startup_config is None:
             self._dblog("resolved_startup_config is None")
-            pod_details.update(f"{self._view_singular()}\n(startup not resolved)")
+            pod_info.update(f"{self._view_singular()}\n(startup not resolved)")
             return
 
         context = self.resolved_startup_config.context
         namespace = self.resolved_startup_config.namespace
         if context is None or namespace is None:
             self._dblog(f"context/namespace is None: ctx={context}, ns={namespace}")
-            pod_details.update(f"{self._view_singular()}\n(startup not resolved)")
+            pod_info.update(f"{self._view_singular()}\n(startup not resolved)")
             return
 
         self._dblog(f"connecting to context={context}, namespace={namespace}")
@@ -1610,15 +1611,15 @@ class KunoApp(App[None]):
             self.services = []
             self.statefulsets = []
             await self._render_pod_table()
-            pod_details.update(f"{self._view_singular()}\n(error: {error})")
+            pod_info.update(f"{self._view_singular()}\n(error: {error})")
             return
 
         self._apply_sort()
         await self._render_pod_table()
         if self._current_rows():
-            self._update_pod_details(self.query_one("#pod-table", DataTable).cursor_row)
+            self._update_pod_info(self.query_one("#pod-table", DataTable).cursor_row)
         else:
-            pod_details.update(f"{self._view_singular()}\n(no {self.current_view.value} found)")
+            pod_info.update(f"{self._view_singular()}\n(no {self.current_view.value} found)")
 
         if self._pending_single_container_check and self.current_view is ExplorerView.CONTAINERS:
             self._pending_single_container_check = False
@@ -1640,7 +1641,7 @@ class KunoApp(App[None]):
     async def _render_pod_table(self) -> None:
         pod_table = self.query_one("#pod-table", DataTable)
         self.query_one("#pod-panel", Vertical).border_title = self._panel_title()
-        self.query_one("#details-panel", VerticalScroll).border_title = self._details_title()
+        self.query_one("#info-panel", VerticalScroll).border_title = self._info_title()
         self._update_status_line()
         self._update_breadcrumb()
         previous_cursor_row = pod_table.cursor_row
@@ -1798,7 +1799,7 @@ class KunoApp(App[None]):
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if event.data_table.id != "pod-table":
             return
-        self._update_pod_details(event.cursor_row)
+        self._update_pod_info(event.cursor_row)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         if event.data_table.id != "pod-table":
@@ -1810,12 +1811,12 @@ class KunoApp(App[None]):
         elif self.current_view is ExplorerView.PODS:
             self._open_selected_pod(event.cursor_row)
 
-    def action_toggle_details(self) -> None:
-        self.details_visible = not self.details_visible
-        details_panel = self.query_one("#details-panel", VerticalScroll)
-        details_panel.display = self.details_visible
-        if self.details_visible:
-            self._update_pod_details(self.query_one("#pod-table", DataTable).cursor_row)
+    def action_toggle_info(self) -> None:
+        self.info_visible = not self.info_visible
+        info_panel = self.query_one("#info-panel", VerticalScroll)
+        info_panel.display = self.info_visible
+        if self.info_visible:
+            self._update_pod_info(self.query_one("#pod-table", DataTable).cursor_row)
 
     def action_open_command_bar(self) -> None:
         command_area = self.query_one("#command-area", Vertical)
@@ -1970,17 +1971,17 @@ class KunoApp(App[None]):
                 f"Restart the selected {self._view_singular()}",
                 self._command_restart,
             )
-        if self.details_visible:
+        if self.info_visible:
             yield SystemCommand(
-                "Hide details",
-                "Close the details side panel",
-                self._command_hide_details,
+                "Hide info",
+                "Close the info side panel",
+                self._command_hide_info,
             )
         else:
             yield SystemCommand(
-                "Show details",
-                "Open the details side panel",
-                self._command_show_details,
+                "Show info",
+                "Open the info side panel",
+                self._command_show_info,
             )
         if self._can_inspect_selected():
             yield SystemCommand(
@@ -2050,10 +2051,10 @@ class KunoApp(App[None]):
                 self._command_services()
             case "sts":
                 self._command_statefulsets()
-            case "details":
-                self._command_show_details()
-            case "hide-details":
-                self._command_hide_details()
+            case "info":
+                self._command_show_info()
+            case "hide-info":
+                self._command_hide_info()
             case "theme":
                 self._command_theme(command.argument)
             case "ns":
@@ -2067,7 +2068,7 @@ class KunoApp(App[None]):
                 self._command_context(command.argument)
             case "help":
                 self.notify(
-                    "Commands: about, back, contexts, namespaces, pods, containers, deploy, sts, svc, pvc, secrets, logs, refresh, details, hide-details, del, restart, theme [name], ns <ns>, ctx <ctx>"
+                    "Commands: about, back, contexts, namespaces, pods, containers, deploy, sts, svc, pvc, secrets, logs, refresh, info, hide-info, del, delete, restart, theme [name], ns <ns>, ctx <ctx>"
                 )
             case _:
                 self.notify(f"Unknown command: {command.name}", severity="error")
@@ -2206,6 +2207,22 @@ class KunoApp(App[None]):
 
     def action_describe_selected(self) -> None:
         self._command_describe()
+
+    def action_delete_selected(self) -> None:
+        self._command_delete()
+
+    def action_restart_selected(self) -> None:
+        self._command_restart()
+
+    def action_open_contexts(self) -> None:
+        if self.current_view is not ExplorerView.CONTEXTS:
+            self.current_view = ExplorerView.CONTEXTS
+            self.refresh_current_view()
+
+    def action_open_namespaces(self) -> None:
+        if self.current_view is not ExplorerView.NAMESPACES:
+            self.current_view = ExplorerView.NAMESPACES
+            self.refresh_current_view()
 
     def action_yaml_selected(self) -> None:
         self._command_yaml()
@@ -2618,17 +2635,17 @@ class KunoApp(App[None]):
         save_config(self.kuno_config)
         self.notify(f"Switched theme to {self.theme}")
 
-    def _command_show_details(self) -> None:
-        if not self.details_visible:
-            self.action_toggle_details()
+    def _command_show_info(self) -> None:
+        if not self.info_visible:
+            self.action_toggle_info()
         else:
-            self.notify("Details panel already open")
+            self.notify("Info panel already open")
 
-    def _command_hide_details(self) -> None:
-        if self.details_visible:
-            self.action_toggle_details()
+    def _command_hide_info(self) -> None:
+        if self.info_visible:
+            self.action_toggle_info()
         else:
-            self.notify("Details panel already closed")
+            self.notify("Info panel already closed")
 
     def _command_namespace(self, namespace: str) -> None:
         current = self._require_target()
@@ -2810,33 +2827,33 @@ class KunoApp(App[None]):
                 return True
         return False
 
-    def _update_pod_details(self, index: int | None) -> None:
-        pod_details = self.query_one("#pod-details", Static)
+    def _update_pod_info(self, index: int | None) -> None:
+        pod_info = self.query_one("#pod-info", Static)
         if index is None:
-            pod_details.update(f"{self._view_singular()}\n(no {self._view_singular()} selected)")
+            pod_info.update(f"{self._view_singular()}\n(no {self._view_singular()} selected)")
             return
         item = self._item_by_row_index(index)
         if item is None:
-            pod_details.update(f"{self._view_singular()}\n(no {self._view_singular()} selected)")
+            pod_info.update(f"{self._view_singular()}\n(no {self._view_singular()} selected)")
             return
         if self.current_view is ExplorerView.PODS:
-            pod_details.update(render_pod_details(item))  # type: ignore[arg-type]
+            pod_info.update(render_pod_details(item))  # type: ignore[arg-type]
         elif self.current_view is ExplorerView.CONTAINERS:
-            pod_details.update(render_container_details(item))  # type: ignore[arg-type]
+            pod_info.update(render_container_details(item))  # type: ignore[arg-type]
         elif self.current_view is ExplorerView.CONTEXTS:
-            pod_details.update(render_context_details(item))  # type: ignore[arg-type]
+            pod_info.update(render_context_details(item))  # type: ignore[arg-type]
         elif self.current_view is ExplorerView.DEPLOYMENTS:
-            pod_details.update(render_deployment_details(item))  # type: ignore[arg-type]
+            pod_info.update(render_deployment_details(item))  # type: ignore[arg-type]
         elif self.current_view is ExplorerView.NAMESPACES:
-            pod_details.update(render_namespace_details(item))  # type: ignore[arg-type]
+            pod_info.update(render_namespace_details(item))  # type: ignore[arg-type]
         elif self.current_view is ExplorerView.PVC:
-            pod_details.update(render_pvc_details(item))  # type: ignore[arg-type]
+            pod_info.update(render_pvc_details(item))  # type: ignore[arg-type]
         elif self.current_view is ExplorerView.SECRETS:
-            pod_details.update(render_secret_details(item))  # type: ignore[arg-type]
+            pod_info.update(render_secret_details(item))  # type: ignore[arg-type]
         elif self.current_view is ExplorerView.SERVICES:
-            pod_details.update(render_service_details(item))  # type: ignore[arg-type]
+            pod_info.update(render_service_details(item))  # type: ignore[arg-type]
         else:
-            pod_details.update(render_statefulset_details(item))  # type: ignore[arg-type]
+            pod_info.update(render_statefulset_details(item))  # type: ignore[arg-type]
 
     def _configure_table_columns(self) -> None:
         pod_table = self.query_one("#pod-table", DataTable)
@@ -2922,24 +2939,24 @@ class KunoApp(App[None]):
             return f"Services{sort_label}"
         return f"StatefulSets{sort_label}"
 
-    def _details_title(self) -> str:
+    def _info_title(self) -> str:
         if self.current_view is ExplorerView.CONTAINERS:
-            return "Container Details"
+            return "Container Info"
         if self.current_view is ExplorerView.CONTEXTS:
-            return "Context Details"
+            return "Context Info"
         if self.current_view is ExplorerView.PODS:
-            return "Pod Details"
+            return "Pod Info"
         if self.current_view is ExplorerView.NAMESPACES:
-            return "Namespace Details"
+            return "Namespace Info"
         if self.current_view is ExplorerView.DEPLOYMENTS:
-            return "Deployment Details"
+            return "Deployment Info"
         if self.current_view is ExplorerView.PVC:
-            return "PVC Details"
+            return "PVC Info"
         if self.current_view is ExplorerView.SECRETS:
-            return "Secret Details"
+            return "Secret Info"
         if self.current_view is ExplorerView.SERVICES:
-            return "Service Details"
-        return "StatefulSet Details"
+            return "Service Info"
+        return "StatefulSet Info"
 
     def _view_singular(self) -> str:
         if self.current_view is ExplorerView.CONTAINERS:
@@ -3011,7 +3028,7 @@ def _format_status_text(app: KunoApp) -> str:
 
 
 def _update_screen_status(screen: Screen) -> None:
-    screen.query_one("#status-line", Static).update(_format_status_text(screen.app))  # type: ignore[arg-type]
+    screen.query_one("#status-line", Static).update(_format_status_text(cast(KunoApp, screen.app)))
 
 
 def _rich_color(name: str) -> str:

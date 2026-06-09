@@ -32,7 +32,7 @@ Screen {
     width: 2fr;
 }
 
-#details-panel {
+#info-panel {
     background: transparent;
     border: round $primary;
     height: 1fr;
@@ -57,7 +57,7 @@ Screen {
     color: $text;
 }
 
-#pod-details {
+#pod-info {
     background: transparent;
     height: 1fr;
     padding: 1;
