@@ -9,24 +9,29 @@ COMMANDS = (
     "containers",
     "contexts",
     "del",
+    "delete",
     "deploy",
+    "deployments",
     "events",
+    "help",
+    "hide-info",
+    "info",
     "keys",
     "logs",
+    "namespace",
     "namespaces",
+    "ns",
     "pods",
     "pvc",
     "refresh",
-    "secrets",
-    "svc",
-    "sts",
-    "details",
-    "hide-details",
     "restart",
+    "secrets",
+    "services",
+    "statefulsets",
+    "sts",
+    "svc",
     "theme",
-    "ns",
     "ctx",
-    "help",
 )
 
 
@@ -49,7 +54,10 @@ def parse_command(raw: str) -> ParsedCommand:
     name = parts[0].lower()
     argument = parts[1].strip() if len(parts) == 2 else None
 
-    if name in {
+    # Normalize aliases
+    normalized = _normalize_alias(name)
+
+    no_arg_commands = {
         "about",
         "back",
         "config",
@@ -58,38 +66,51 @@ def parse_command(raw: str) -> ParsedCommand:
         "del",
         "deploy",
         "events",
+        "help",
+        "hide-info",
+        "info",
         "keys",
         "logs",
         "namespaces",
         "pods",
         "pvc",
         "refresh",
+        "restart",
         "secrets",
         "sts",
         "svc",
-        "details",
-        "hide-details",
-        "restart",
-        "help",
-    }:
-        if argument is not None:
-            raise ValueError(f"Command '{name}' does not take arguments")
-        return ParsedCommand(name=name)
+    }
 
-    if name == "theme":
-        return ParsedCommand(name=name, argument=argument)
-
-    if name == "ns":
+    if normalized == "ns":
         if argument is None:
-            return ParsedCommand(name=name)
-        return ParsedCommand(name=name, argument=argument)
+            return ParsedCommand(name="ns")
+        return ParsedCommand(name="ns", argument=argument)
 
-    if name == "ctx":
+    if normalized == "ctx":
         if argument is None:
             raise ValueError(f"Command '{name}' requires an argument")
-        return ParsedCommand(name=name, argument=argument)
+        return ParsedCommand(name="ctx", argument=argument)
+
+    if normalized == "theme":
+        return ParsedCommand(name="theme", argument=argument)
+
+    if normalized in no_arg_commands:
+        if argument is not None:
+            raise ValueError(f"Command '{name}' does not take arguments")
+        return ParsedCommand(name=normalized)
 
     raise ValueError(f"Unknown command: {name}")
+
+
+def _normalize_alias(name: str) -> str:
+    alias_map: dict[str, str] = {
+        "delete": "del",
+        "services": "svc",
+        "statefulsets": "sts",
+        "deployments": "deploy",
+        "namespace": "ns",
+    }
+    return alias_map.get(name, name)
 
 
 def suggest_commands(
