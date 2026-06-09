@@ -225,7 +225,7 @@ class LogView(ScrollView, can_focus=True):
         char_offset += min(col, seg_len)
         return line_idx, char_offset
 
-    def get_selection(self, selection: Selection) -> tuple[str, str] | None:
+    def get_log_selection(self, selection: Selection) -> tuple[str, str] | None:
         if not self._lines:
             return None
         if selection.start is None or selection.end is None:
