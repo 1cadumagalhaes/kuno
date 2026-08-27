@@ -71,3 +71,37 @@ async def test_sync_preserves_cursor():
         ]
         sync.sync(items, key_fn=lambda p: p["name"], pending=set())
         assert table.cursor_row == 1
+
+
+@pytest.mark.asyncio
+async def test_sync_reorders_rows_without_clearing_columns():
+    app = SyncApp()
+    async with app.run_test():
+        table = app.query_one("#t", DataTable)
+        sync = TableSync(table)
+        sync.setup_columns(
+            name_width=20,
+            columns=[ColumnDef("Ready", 6, "ready", lambda p: p["ready"])],
+            name_extractor=lambda p: p["name"],
+        )
+
+        items = [
+            {"name": "pod-a", "ready": "1/1"},
+            {"name": "pod-b", "ready": "1/1"},
+            {"name": "pod-c", "ready": "1/1"},
+        ]
+        sync.sync(items, key_fn=lambda p: p["name"], pending=set())
+        assert table.row_count == 3
+        assert len(table.columns) == 2  # Name + Ready
+
+        # Reverse the order — rows should reorder, columns stay intact
+        items = [
+            {"name": "pod-c", "ready": "1/1"},
+            {"name": "pod-b", "ready": "1/1"},
+            {"name": "pod-a", "ready": "1/1"},
+        ]
+        sync.sync(items, key_fn=lambda p: p["name"], pending=set())
+        assert table.row_count == 3
+        assert len(table.columns) == 2
+        assert table.get_row_at(0)[0] == "pod-c"
+        assert table.get_row_at(2)[0] == "pod-a"

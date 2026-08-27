@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 
@@ -67,9 +68,24 @@ class TableSync:
         for key in old_keys - new_keys_set:
             try:
                 self.table.remove_row(key)
-                removed_key = key
+                removed_key = key.value if hasattr(key, "value") else str(key)
             except Exception:  # noqa: S110
                 pass
+
+        # Detect reordering: if the surviving rows are no longer in the same
+        # relative order as the input, clear rows (not columns) and re-add in
+        # the new order so the sort is reflected without a full reconfigure.
+        surviving = [k for k in new_keys_ordered if k in old_keys]
+        current_order = [str(k.value) for k in self.table.rows if str(k.value) in surviving]
+        if surviving and current_order != surviving:
+            for key in list(self.table.rows):
+                with suppress(Exception):
+                    self.table.remove_row(key)
+            old_keys = set()
+            for key in new_keys_ordered:
+                values = self._full_row_values(new_map[key])
+                self.table.add_row(*values, key=key)
+            return removed_key
 
         # Add new rows in the order they appear in the input list
         for key in new_keys_ordered:
