@@ -271,6 +271,8 @@ class LogsScreen(Screen[None]):
         self.query_one("#logs-detail-panel", Vertical).border_title = "Log Detail"
         self.query_one("#logs-detail-panel", Vertical).display = False
         self.load_logs()
+        if self.follow_enabled:
+            self._start_streaming()
 
     @work(exclusive=True)
     async def load_logs(self) -> None:
