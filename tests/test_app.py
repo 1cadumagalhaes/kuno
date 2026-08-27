@@ -1,7 +1,7 @@
 import pytest
 from pytest import MonkeyPatch
 from textual.containers import Vertical, VerticalScroll
-from textual.widgets import DataTable, Input, Static
+from textual.widgets import Button, DataTable, Input, Static
 
 from kuno.app import AboutScreen, KunoApp, LogsScreen
 from kuno.k8s.config import UnknownContextError
@@ -2654,3 +2654,57 @@ async def test_refresh_preserves_selected_pod_by_key(monkeypatch) -> None:
 
         assert table.cursor_row == 2
         assert app._selected_resource_name() == "zebra"
+
+
+@pytest.mark.asyncio
+async def test_confirm_dialog_arrow_keys_move_focus(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
+        return [
+            PodSummary(
+                name="api-1",
+                ready="1/1",
+                status="Running",
+                restarts=0,
+                age="1m",
+                containers="api",
+                cpu="100m",
+                memory="64Mi",
+            )
+        ]
+
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
+    app.current_view = ExplorerView.PODS
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.execute_command("del")
+        await pilot.pause()
+
+        confirm_btn = app.screen.query_one("#confirm-yes", Button)
+        assert not confirm_btn.has_focus
+
+        await pilot.press("right")
+        await pilot.pause()
+        assert confirm_btn.has_focus
+
+        await pilot.press("left")
+        await pilot.pause()
+        assert app.screen.query_one("#confirm-no", Button).has_focus

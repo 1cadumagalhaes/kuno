@@ -140,6 +140,13 @@ class SplashScreen(Screen):
 
 
 class ConfirmActionScreen(ModalScreen[bool]):
+    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
+        ("left", "move_left", "Left"),
+        ("right", "move_right", "Right"),
+        ("up", "move_left", "Left"),
+        ("down", "move_right", "Right"),
+    ]
+
     def __init__(self, title: str, message: str) -> None:
         super().__init__()
         self.dialog_title = title
@@ -155,6 +162,15 @@ class ConfirmActionScreen(ModalScreen[bool]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss(event.button.id == "confirm-yes")
+
+    def on_mount(self) -> None:
+        self.query_one("#confirm-no", Button).focus()
+
+    def action_move_left(self) -> None:
+        self.query_one("#confirm-no", Button).focus()
+
+    def action_move_right(self) -> None:
+        self.query_one("#confirm-yes", Button).focus()
 
 
 class LogsScreen(Screen[None]):
