@@ -8,7 +8,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, ClassVar, cast
 
-from rich.syntax import Syntax
 from rich.text import Text
 from textual import events, work
 from textual.app import App, ComposeResult, SystemCommand
@@ -65,7 +64,13 @@ from kuno.k8s.resources import (
     truncate_for_table,
 )
 from kuno.log_view import LogView
-from kuno.logs import LogMode, format_log_line, parse_log_line, rich_log_line
+from kuno.logs import (
+    LogMode,
+    ParsedLogLine,
+    format_parsed_log_line,
+    parse_log_line,
+    rich_log_line,
+)
 from kuno.models import (
     ContainerSummary,
     ContextSummary,
@@ -220,6 +225,9 @@ class LogsScreen(Screen[None]):
         self.filter_text = ""
         self.follow_enabled = True
         self.log_lines: list[str] = []
+        # Parsed form of log_lines, kept in lockstep so rendering/filtering
+        # don't re-run json.loads on every keystroke or status update.
+        self._parsed_log_lines: list[ParsedLogLine] = []
         self.mode = (
             LogMode(kuno_config.log_mode)
             if kuno_config.log_mode in LogMode._value2member_map_
@@ -270,7 +278,7 @@ class LogsScreen(Screen[None]):
             yield Input(placeholder="since (e.g. 5m, 1h)", id="logs-since")
             yield Input(placeholder="filter logs", id="logs-filter")
         with Horizontal(id="logs-body"):
-            yield LogView(id="logs-output", mode=self.mode)
+            yield LogView(id="logs-output", mode=self.mode, max_lines=self._MAX_LOG_LINES)
             with Vertical(id="logs-detail-panel"):
                 yield Static("(no log selected)", id="logs-detail-content")
         yield Footer()
@@ -301,6 +309,7 @@ class LogsScreen(Screen[None]):
         output = self.query_one("#logs-output", LogView)
         output.clear()
         self.log_lines = []
+        self._parsed_log_lines = []
 
         if self._is_multi_stream():
             await self._load_all_pod_logs()
@@ -334,7 +343,7 @@ class LogsScreen(Screen[None]):
         except Exception as error:
             output.append(f"error: {error}")
             return
-        self.log_lines = logs.splitlines() if logs else []
+        self._set_log_lines(logs.splitlines() if logs else [])
 
     async def _load_all_pod_logs(self) -> None:
         output = self.query_one("#logs-output", LogView)
@@ -356,7 +365,7 @@ class LogsScreen(Screen[None]):
                 output.append(f"[{pod_name}] error: {error}")
                 continue
             merged.extend(f"[{pod_name}] {line}" for line in logs.splitlines())
-        self.log_lines = merged
+        self._set_log_lines(merged)
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "logs-filter":
@@ -453,6 +462,11 @@ class LogsScreen(Screen[None]):
                 self.app.copy_to_clipboard(result[0])
                 self.notify("Copied selection")
                 return
+        # No mouse text selection: fall back to the currently highlighted line.
+        if output.selected_index >= 0 and output.selected_index < len(output._lines):
+            self.app.copy_to_clipboard(output._lines[output.selected_index])
+            self.notify("Copied line")
+            return
         self.notify("No selection to copy", severity="warning")
 
     def action_next_line(self) -> None:
@@ -630,9 +644,18 @@ class LogsScreen(Screen[None]):
 
     _MAX_LOG_LINES = 100_000
 
+    def _set_log_lines(self, lines: list[str]) -> None:
+        self.log_lines = list(lines)
+        self._parsed_log_lines = [parse_log_line(raw) for raw in self.log_lines]
+
+    def _append_log_line(self, line: str) -> None:
+        self.log_lines.append(line)
+        self._parsed_log_lines.append(parse_log_line(line))
+
     def _trim_log_lines(self) -> None:
         if len(self.log_lines) > self._MAX_LOG_LINES:
             self.log_lines = self.log_lines[-self._MAX_LOG_LINES :]
+            self._parsed_log_lines = self._parsed_log_lines[-self._MAX_LOG_LINES :]
 
     def _update_status(self) -> None:
         total = len(self.log_lines)
@@ -675,7 +698,7 @@ class LogsScreen(Screen[None]):
                     timestamps=self.timestamps_enabled,
                 ):
                     prefixed = f"{prefix}{line}"
-                    self.log_lines.append(prefixed)
+                    self._append_log_line(prefixed)
                     self._trim_log_lines()
                     self.selected_log_index = len(self.log_lines) - 1
                     if self.filter_text and self.filter_text not in prefixed:
@@ -740,8 +763,8 @@ class LogsScreen(Screen[None]):
 
     def _display_lines_plain(self) -> list[str]:
         lines: list[str] = []
-        for raw_line in self.log_lines:
-            lines.extend(format_log_line(raw_line, self.mode))
+        for parsed in self._parsed_log_lines:
+            lines.extend(format_parsed_log_line(parsed, self.mode))
         return lines
 
     def _update_detail_panel(self) -> None:
@@ -755,17 +778,16 @@ class LogsScreen(Screen[None]):
             detail.update("(no log selected)")
             return
         index = self.selected_log_index if self.selected_log_index in visible else visible[0]
-        raw_line = self.log_lines[index]
-        parsed = parse_log_line(raw_line)
+        parsed = self._parsed_log_lines[index]
         panel.border_title = f"Log Detail ({index + 1}/{len(visible)})"
         timestamp = f"timestamp: {parsed.timestamp}\n\n" if parsed.timestamp else ""
-        body = format_log_line(raw_line, LogMode.STRUCTURED)[0]
+        body = format_parsed_log_line(parsed, LogMode.STRUCTURED)[0]
         detail.update(f"{timestamp}{body}")
 
     def _visible_log_indices(self) -> list[int]:
         visible: list[int] = []
-        for index, raw_line in enumerate(self.log_lines):
-            rendered = format_log_line(raw_line, self.mode)
+        for index, parsed in enumerate(self._parsed_log_lines):
+            rendered = format_parsed_log_line(parsed, self.mode)
             if self.filter_text and not any(self.filter_text in line for line in rendered):
                 continue
             visible.append(index)
@@ -848,6 +870,8 @@ class ManifestScreen(Screen[None]):
         return "ansi_dark" if (t is None or t.dark) else "ansi_light"
 
     def _render_yaml(self, highlight_line: int | None = None) -> None:
+        from rich.syntax import Syntax
+
         output = self.query_one("#manifest-output", Static)
         syntax = Syntax(
             self.yaml_content,
@@ -1485,6 +1509,10 @@ class KunoApp(App[None]):
         # Sort state
         self._sort_column: str | None = None
         self._sort_reverse: bool = False
+        # key -> item index for O(1) row lookups
+        self._row_index: dict[str, Any] = {}
+        # last row key rendered in the info panel, to skip redundant re-renders
+        self._last_info_key: str | None = None
         # Per-context namespace memory (last namespace used per context)
         self.state = KunoState()
 
@@ -1722,6 +1750,7 @@ class KunoApp(App[None]):
             return
 
         self._apply_sort()
+        self._rebuild_row_index()
         await self._render_pod_table()
         if self._current_rows():
             self._update_pod_info(self.query_one("#pod-table", DataTable).cursor_row)
@@ -2835,9 +2864,8 @@ class KunoApp(App[None]):
         # Update the data list (mutate in place)
         rows.clear()
         rows.extend(sorted_rows)
-        # Force table refresh with new order
-        self._last_table_view = None
-        self._table_sync = None
+        # TableSync.sync() detects the new order and reorders rows without
+        # clearing columns, so no need to reset the sync state here.
 
     def _command_theme(self, theme_name: str | None) -> None:
         if theme_name is None:
@@ -3050,11 +3078,11 @@ class KunoApp(App[None]):
         key_str = self._row_key_at_index(index)
         if key_str is None:
             return None
-        rows = self._current_rows()
-        for row in rows:
-            if self._key_fn()(row) == key_str:
-                return row
-        return None
+        return self._row_index.get(key_str)
+
+    def _rebuild_row_index(self) -> None:
+        key_fn = self._key_fn()
+        self._row_index = {key_fn(row): row for row in self._current_rows()}
 
     def _row_key_at_index(self, index: int | None) -> str | None:
         if index is None:
@@ -3070,21 +3098,30 @@ class KunoApp(App[None]):
 
     def _move_cursor_to_key(self, key: str) -> bool:
         pod_table = self.query_one("#pod-table", DataTable)
-        for row_index in range(pod_table.row_count):
-            if self._row_key_at_index(row_index) == key:
-                pod_table.move_cursor(row=row_index, animate=False)
-                return True
-        return False
+        try:
+            row_index = pod_table.get_row_index(key)
+        except Exception:
+            return False
+        if row_index is None:
+            return False
+        pod_table.move_cursor(row=row_index, animate=False)
+        return True
 
     def _update_pod_info(self, index: int | None) -> None:
         pod_info = self.query_one("#pod-info", Static)
         if index is None:
+            self._last_info_key = None
             pod_info.update(f"{self._view_singular()}\n(no {self._view_singular()} selected)")
             return
         item = self._item_by_row_index(index)
         if item is None:
+            self._last_info_key = None
             pod_info.update(f"{self._view_singular()}\n(no {self._view_singular()} selected)")
             return
+        key = self._key_fn()(item)
+        if key == self._last_info_key:
+            return
+        self._last_info_key = key
         if self.current_view is ExplorerView.PODS:
             pod_info.update(render_pod_details(item))  # type: ignore[arg-type]
         elif self.current_view is ExplorerView.CONTAINERS:
