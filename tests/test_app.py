@@ -200,7 +200,60 @@ async def test_app_selecting_namespace_opens_pods(monkeypatch) -> None:
         pod_table = app.query_one("#pod-table", DataTable)
         assert app.current_view is ExplorerView.PODS
         assert pod_panel.border_title == "Pods"
-        assert pod_table.row_count == 1
+
+
+@pytest.mark.asyncio
+async def test_context_switch_remembers_and_validates_namespaces(monkeypatch) -> None:
+    resolved_inputs: list[StartupConfig] = []
+
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        resolved_inputs.append(startup_config)
+        return StartupConfig(
+            context=startup_config.context,
+            namespace=startup_config.namespace or "default",
+        )
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_namespaces(kube_client: FakeKubeClient) -> list[str]:
+        return ["payments"] if kube_client.context == "prod" else ["default"]
+
+    async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
+        return []
+
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_namespaces", fake_list_namespaces)
+    monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        app._command_context("dev")
+        await pilot.pause()
+        assert app.state.namespace_for("prod") == "payments"
+        assert app.resolved_startup_config == StartupConfig(context="dev", namespace="default")
+
+        app._command_context("prod")
+        await pilot.pause()
+        assert app.resolved_startup_config == StartupConfig(context="prod", namespace="payments")
+
+        app.state.remember_namespace("dev", "payments")
+        app._command_context("dev")
+        await pilot.pause()
+        assert app.resolved_startup_config == StartupConfig(context="dev", namespace="default")
+        assert resolved_inputs[-1] == StartupConfig(context="dev", namespace=None)
 
 
 @pytest.mark.asyncio

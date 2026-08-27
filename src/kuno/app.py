@@ -1496,7 +1496,7 @@ class KunoApp(App[None]):
         self.debug_enabled = False
         # Persistent per-context client handles to avoid reconnecting on every
         # 2s refresh. Each handle is a KubeClient flagged for reuse; the
-        # underlying ApiClient is shared and only closed on app exit.
+        # underlying ApiClient is kept alive and only closed on app exit.
         self._clients: dict[str, KubeClient] = {}
         # Short-lived caches so cheap-but-repeated reads don't hit the API
         # every refresh tick.
@@ -1591,7 +1591,12 @@ class KunoApp(App[None]):
     async def _close_clients(self) -> None:
         for client in self._clients.values():
             with suppress(Exception):
-                await client.close()
+                if client.api_client is not None:
+                    await client.api_client.close()
+                    client.api_client = None
+                    client.core_v1 = None
+                    client.apps_v1 = None
+                    client.custom_objects = None
         self._clients.clear()
         self._namespace_cache.clear()
         self._namespace_cache_ts.clear()
@@ -2902,10 +2907,22 @@ class KunoApp(App[None]):
 
     def _command_context(self, context: str) -> None:
         current = self._require_target()
+        if current.context is not None and current.namespace is not None:
+            self.state.remember_namespace(current.context, current.namespace)
+        self._switch_context(context)
+
+    @work(exclusive=True)
+    async def _switch_context(self, context: str) -> None:
         remembered = self.state.namespace_for(context)
-        namespace = remembered or current.namespace
+        if remembered is not None:
+            client = self._client(context)
+            async with client:
+                namespaces = await self._cached_namespaces(client, context)
+            if remembered not in namespaces:
+                remembered = None
+
         self.resolved_startup_config = load_startup_targets(
-            StartupConfig(context=context, namespace=namespace)
+            StartupConfig(context=context, namespace=remembered)
         )
         self._update_status_line()
         self._update_breadcrumb()
@@ -2920,7 +2937,7 @@ class KunoApp(App[None]):
     def _client(self, context: str) -> KubeClient:
         """Return a reusable KubeClient handle for *context*.
 
-        The handle reuses the shared underlying ApiClient so the polling loop
+        The handle reuses its underlying ApiClient so the polling loop
         doesn't re-parse kubeconfig / reopen a connection every 2 seconds. It
         is safe to ``async with`` this handle; closing it only drops this
         instance's references and leaves the shared connection intact.

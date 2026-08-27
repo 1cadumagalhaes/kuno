@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any, cast
+
 import pytest
 
 from kuno.k8s.client import KubeClient
@@ -86,3 +88,22 @@ async def test_kube_client_close_is_safe_without_connecting() -> None:
     await client.close()
 
     assert client.api_client is None
+
+
+@pytest.mark.asyncio
+async def test_reused_kube_client_close_keeps_connection() -> None:
+    client = KubeClient(context="prod")
+    api_client = FakeApiClient()
+    client.api_client = cast(Any, api_client)
+    client.core_v1 = cast(Any, object())
+    client.apps_v1 = cast(Any, object())
+    client.custom_objects = cast(Any, object())
+    client._reuse = True
+
+    await client.close()
+
+    assert client.api_client is api_client
+    assert client.core_v1 is not None
+    assert client.apps_v1 is not None
+    assert client.custom_objects is not None
+    assert api_client.closed is False
