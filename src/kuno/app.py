@@ -77,6 +77,7 @@ from kuno.models import (
     StatefulSetSummary,
     WorkloadSource,
 )
+from kuno.state import KunoState
 from kuno.system_theme import Palette, build_system_theme
 from kuno.table_sync import ColumnDef, TableSync
 
@@ -1462,6 +1463,8 @@ class KunoApp(App[None]):
         # Sort state
         self._sort_column: str | None = None
         self._sort_reverse: bool = False
+        # Per-context namespace memory (last namespace used per context)
+        self.state = KunoState()
 
     def _dblog(self, msg: str) -> None:
         if not self.debug_enabled:
@@ -2735,6 +2738,8 @@ class KunoApp(App[None]):
     def _command_namespace(self, namespace: str) -> None:
         current = self._require_target()
         self.resolved_startup_config = StartupConfig(context=current.context, namespace=namespace)
+        if current.context is not None:
+            self.state.remember_namespace(current.context, namespace)
         self._update_status_line()
         self._update_breadcrumb()
         self.refresh_current_view()
@@ -2742,8 +2747,10 @@ class KunoApp(App[None]):
 
     def _command_context(self, context: str) -> None:
         current = self._require_target()
+        remembered = self.state.namespace_for(context)
+        namespace = remembered or current.namespace
         self.resolved_startup_config = load_startup_targets(
-            StartupConfig(context=context, namespace=current.namespace)
+            StartupConfig(context=context, namespace=namespace)
         )
         self._update_status_line()
         self._update_breadcrumb()
