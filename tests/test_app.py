@@ -1282,7 +1282,7 @@ async def test_logs_copy_copies_highlighted_line(monkeypatch) -> None:
         since_seconds: int | None = None,
         timestamps: bool = False,
     ) -> str:
-        return "line-1\nline-2\nline-3"
+        return '{"level":"info","message":"line-1"}\n{"level":"error","message":"line-3"}'
 
     class FakeKubeClient:
         def __init__(self, context: str) -> None:
@@ -1321,6 +1321,7 @@ async def test_logs_copy_copies_highlighted_line(monkeypatch) -> None:
     )
 
     app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
+    app.kuno_config.log_mode = "structured"
     app.current_view = ExplorerView.CONTAINERS
     app.container_pod_name = "api-1"
 
@@ -1331,9 +1332,13 @@ async def test_logs_copy_copies_highlighted_line(monkeypatch) -> None:
         app.execute_command("logs")
         await pilot.pause()
         assert isinstance(app.screen, LogsScreen)
-        app.screen.action_copy_selection()
+        app.screen.action_copy_rendered()
         await pilot.pause()
-        assert copied == ["line-3"]
+        assert copied == ["ERROR line-3"]
+        copied.clear()
+        app.screen.action_copy_raw()
+        await pilot.pause()
+        assert copied == ['{"level":"error","message":"line-3"}']
 
 
 @pytest.mark.asyncio

@@ -67,6 +67,7 @@ from kuno.log_view import LogView
 from kuno.logs import (
     LogMode,
     ParsedLogLine,
+    format_log_line,
     format_parsed_log_line,
     parse_log_line,
     rich_log_line,
@@ -188,8 +189,8 @@ class LogsScreen(Screen[None]):
         ("escape", "close", "Back"),
         ("backspace", "close", ""),
         ("d", "open_detail", "Detail"),
-        ("y", "copy_selection", "Copy"),
-        ("ctrl+c", "copy_selection", "Copy"),
+        ("y", "copy_rendered", "Copy rendered"),
+        ("ctrl+c", "copy_raw", "Copy raw"),
         ("f", "toggle_follow", "Follow"),
         ("l", "noop", ""),
         ("j", "next_line", "Next"),
@@ -453,21 +454,48 @@ class LogsScreen(Screen[None]):
         self.filter_text = ""
         self._render_logs()
 
-    def action_copy_selection(self) -> None:
+    def _selected_copy_text(self, *, rendered: bool) -> str | None:
         output = self.query_one("#logs-output", LogView)
         selection = output.text_selection
         if selection is not None and selection.start is not None and selection.end is not None:
-            result = output.get_log_selection(selection)
-            if result:
-                self.app.copy_to_clipboard(result[0])
-                self.notify("Copied selection")
-                return
+            if rendered:
+                start = output._visual_to_text_pos(*selection.start.transpose)
+                end = output._visual_to_text_pos(*selection.end.transpose)
+                if start is not None and end is not None:
+                    start_line, end_line = sorted((start[0], end[0]))
+                    visible = self._visible_log_indices()
+                    raw_lines = (self.log_lines[visible[index]] for index in range(start_line, end_line + 1))
+                    return "\n".join(
+                        rendered_line
+                        for raw_line in raw_lines
+                        for rendered_line in format_log_line(raw_line, self.mode)
+                    )
+            else:
+                result = output.get_log_selection(selection)
+                if result:
+                    return result[0]
         # No mouse text selection: fall back to the currently highlighted line.
-        if output.selected_index >= 0 and output.selected_index < len(output._lines):
-            self.app.copy_to_clipboard(output._lines[output.selected_index])
-            self.notify("Copied line")
+        if 0 <= self.selected_log_index < len(self.log_lines):
+            if rendered:
+                return "\n".join(format_log_line(self.log_lines[self.selected_log_index], self.mode))
+            return self.log_lines[self.selected_log_index]
+        return None
+
+    def action_copy_rendered(self) -> None:
+        text = self._selected_copy_text(rendered=True)
+        if text is None:
+            self.notify("No selection to copy", severity="warning")
             return
-        self.notify("No selection to copy", severity="warning")
+        self.app.copy_to_clipboard(text)
+        self.notify("Copied rendered log")
+
+    def action_copy_raw(self) -> None:
+        text = self._selected_copy_text(rendered=False)
+        if text is None:
+            self.notify("No selection to copy", severity="warning")
+            return
+        self.app.copy_to_clipboard(text)
+        self.notify("Copied raw log")
 
     def action_next_line(self) -> None:
         if self.follow_enabled:
