@@ -26,9 +26,9 @@ classifiers = [
 ]
 urls = { Homepage = "https://github.com/1cadumagalhaes/kuno" }
 dependencies = [
-    "kubernetes-asyncio>=35.0.1",
+    "kubernetes-asyncio>=36.1.0",
     "pyyaml>=6.0.3",
-    "textual>=8.2.1",
+    "textual>=8.2.8",
 ]
 
 [project.scripts]

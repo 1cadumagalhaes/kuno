@@ -1445,6 +1445,14 @@ class KunoApp(App[None]):
         self._pending_single_container_check = False
         self.splash: SplashScreen | None = SplashScreen() if show_splash else None
         self.debug_enabled = False
+        # Persistent per-context client handles to avoid reconnecting on every
+        # 2s refresh. Each handle is a KubeClient flagged for reuse; the
+        # underlying ApiClient is shared and only closed on app exit.
+        self._clients: dict[str, KubeClient] = {}
+        # Short-lived caches so cheap-but-repeated reads don't hit the API
+        # every refresh tick.
+        self._namespace_cache: dict[str, list[str]] = {}
+        self._namespace_cache_ts: dict[str, float] = {}
         # Smart table refresh state
         self._table_sync: TableSync | None = None
         self._pending_actions: dict[str, str] = {}
@@ -1522,6 +1530,17 @@ class KunoApp(App[None]):
         self.set_interval(2, self.refresh_current_view)
         self._dblog("on_mount done")
 
+    async def on_unmount(self) -> None:
+        await self._close_clients()
+
+    async def _close_clients(self) -> None:
+        for client in self._clients.values():
+            with suppress(Exception):
+                await client.close()
+        self._clients.clear()
+        self._namespace_cache.clear()
+        self._namespace_cache_ts.clear()
+
     @work(exclusive=True)
     async def refresh_current_view(self) -> None:
         self._dblog(f"refresh_current_view started, view={self.current_view}")
@@ -1551,7 +1570,7 @@ class KunoApp(App[None]):
 
         self._dblog(f"connecting to context={context}, namespace={namespace}")
         try:
-            async with KubeClient(context=context) as kube_client:
+            async with self._client(context) as kube_client:
                 self._dblog("kube client connected")
                 if self.current_view is ExplorerView.PODS:
                     self.container_pod_name = None
@@ -1659,7 +1678,7 @@ class KunoApp(App[None]):
                     self.secrets = []
                     self.services = []
                 with suppress(Exception):
-                    self.available_namespaces = await list_namespaces(kube_client)
+                    self.available_namespaces = await self._cached_namespaces(kube_client, context)
         except Exception as error:
             self.container_pod_name = None
             self.containers = []
@@ -2312,7 +2331,7 @@ class KunoApp(App[None]):
             return
         kind = self.current_view.value.rstrip("s")
         try:
-            async with KubeClient(context=context) as kube_client:
+            async with self._client(context) as kube_client:
                 item = await read_resource(kube_client, namespace, kind, name)
                 describe_text = render_describe_text(item)
                 events = await get_resource_events(kube_client, namespace, kind, name)
@@ -2345,7 +2364,7 @@ class KunoApp(App[None]):
             return
         kind = self.current_view.value.rstrip("s")
         try:
-            async with KubeClient(context=context) as kube_client:
+            async with self._client(context) as kube_client:
                 yaml_content = await get_resource_yaml(kube_client, namespace, kind, name)
         except Exception as error:
             self.notify(f"Failed to get YAML for {kind}/{name}: {error}", severity="error")
@@ -2383,7 +2402,7 @@ class KunoApp(App[None]):
             return
         kind = self.current_view.value.rstrip("s")
         try:
-            async with KubeClient(context=context) as kube_client:
+            async with self._client(context) as kube_client:
                 events = await get_resource_events(kube_client, namespace, kind, name)
         except Exception as error:
             self.notify(f"Failed to get events: {error}", severity="error")
@@ -2403,7 +2422,7 @@ class KunoApp(App[None]):
         context = target.context
         namespace = target.namespace
         try:
-            async with KubeClient(context=context) as kube_client:
+            async with self._client(context) as kube_client:
                 events = await list_namespace_events(kube_client, namespace)
         except Exception as error:
             self.notify(f"Failed to get events: {error}", severity="error")
@@ -2437,7 +2456,7 @@ class KunoApp(App[None]):
 
         if isinstance(logs_source, WorkloadSource):
             try:
-                async with KubeClient(context=context) as kube_client:
+                async with self._client(context) as kube_client:
                     pod_names = await list_pods_for_workload(
                         kube_client, namespace, logs_source.kind, logs_source.name
                     )
@@ -2564,7 +2583,7 @@ class KunoApp(App[None]):
             self.notify("Context is not resolved", severity="error")
             return
         try:
-            async with KubeClient(context=target.context) as kube_client:
+            async with self._client(target.context) as kube_client:
                 await restart_resource(kube_client, view=view, name=name, namespace=namespace)
         except Exception as error:
             self.notify(str(error), severity="error")
@@ -2733,6 +2752,36 @@ class KunoApp(App[None]):
         if self.resolved_startup_config is None:
             raise ValueError("Startup target is not resolved")
         return self.resolved_startup_config
+
+    def _client(self, context: str) -> KubeClient:
+        """Return a reusable KubeClient handle for *context*.
+
+        The handle reuses the shared underlying ApiClient so the polling loop
+        doesn't re-parse kubeconfig / reopen a connection every 2 seconds. It
+        is safe to ``async with`` this handle; closing it only drops this
+        instance's references and leaves the shared connection intact.
+        """
+        client = self._clients.get(context)
+        if client is None:
+            client = KubeClient(context=context)
+            client._reuse = True
+            self._clients[context] = client
+        return client
+
+    async def _cached_namespaces(self, kube_client: Any, context: str) -> list[str]:
+        """List namespaces, caching the result per context for a short TTL."""
+        now = time.monotonic()
+        cached_ts = self._namespace_cache_ts.get(context, 0.0)
+        cached = self._namespace_cache.get(context)
+        if cached is not None and now - cached_ts < 30:
+            return cached
+        try:
+            namespaces = await list_namespaces(kube_client)
+        except Exception:
+            return cached if cached is not None else []
+        self._namespace_cache[context] = namespaces
+        self._namespace_cache_ts[context] = now
+        return namespaces
 
     def _selected_item(self) -> Any | None:
         pod_table = self.query_one("#pod-table", DataTable)
@@ -3116,3 +3165,4 @@ def _update_screen_breadcrumb(screen: Screen, parts: list[tuple[str, str]]) -> N
             text.append(" > ", style="dim")
         text.append(f" {label} ", style=f"bold white on {hex_bg}")
     screen.query_one("#breadcrumb", Static).update(text)
+
