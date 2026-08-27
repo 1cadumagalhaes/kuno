@@ -132,6 +132,96 @@ def test_pod_summary_from_api_item_defaults_phase() -> None:
     )
 
 
+def test_pod_status_reports_container_level_states() -> None:
+    def build(container_statuses: list) -> SimpleNamespace:
+        return SimpleNamespace(
+            metadata=SimpleNamespace(name="api-1"),
+            status=SimpleNamespace(
+                phase="Running",
+                container_statuses=container_statuses,
+            ),
+            spec=SimpleNamespace(containers=[]),
+        )
+
+    crash_loop = build(
+        [
+            SimpleNamespace(
+                name="api",
+                ready=False,
+                restart_count=5,
+                state=SimpleNamespace(
+                    waiting=SimpleNamespace(reason="CrashLoopBackOff", message="backoff"),
+                    running=None,
+                    terminated=None,
+                ),
+            )
+        ]
+    )
+    assert pod_summary_from_api_item(crash_loop).status == "CrashLoopBackOff"
+
+    image_pull = build(
+        [
+            SimpleNamespace(
+                name="api",
+                ready=False,
+                restart_count=0,
+                state=SimpleNamespace(
+                    waiting=SimpleNamespace(reason="ImagePullBackOff", message="pull"),
+                    running=None,
+                    terminated=None,
+                ),
+            )
+        ]
+    )
+    assert pod_summary_from_api_item(image_pull).status == "ImagePullBackOff"
+
+    oom = build(
+        [
+            SimpleNamespace(
+                name="api",
+                ready=False,
+                restart_count=3,
+                state=SimpleNamespace(
+                    waiting=None,
+                    running=None,
+                    terminated=SimpleNamespace(reason="OOMKilled", exit_code=137),
+                ),
+            )
+        ]
+    )
+    assert pod_summary_from_api_item(oom).status == "OOMKilled"
+
+
+def test_pod_status_reports_init_container_and_terminating() -> None:
+    init_crash = SimpleNamespace(
+        metadata=SimpleNamespace(name="api-1"),
+        status=SimpleNamespace(
+            phase="Pending",
+            init_container_statuses=[
+                SimpleNamespace(
+                    name="init",
+                    ready=False,
+                    state=SimpleNamespace(
+                        waiting=SimpleNamespace(reason="CrashLoopBackOff", message="x"),
+                        running=None,
+                        terminated=None,
+                    ),
+                )
+            ],
+            container_statuses=[],
+        ),
+        spec=SimpleNamespace(containers=[]),
+    )
+    assert pod_summary_from_api_item(init_crash).status == "Init:CrashLoopBackOff"
+
+    terminating = SimpleNamespace(
+        metadata=SimpleNamespace(name="api-1", deletion_timestamp=datetime(2026, 6, 4)),
+        status=SimpleNamespace(phase="Running", container_statuses=[]),
+        spec=SimpleNamespace(containers=[]),
+    )
+    assert pod_summary_from_api_item(terminating).status == "Terminating"
+
+
 def test_pod_summary_includes_usage_requests_and_limits() -> None:
     item = SimpleNamespace(
         metadata=SimpleNamespace(name="api-1"),

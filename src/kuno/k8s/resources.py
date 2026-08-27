@@ -311,7 +311,6 @@ def pod_summary_from_api_item(
     status = getattr(item, "status", None)
     name = getattr(metadata, "name", None)
     phase = getattr(status, "phase", None)
-    reason = getattr(status, "reason", None)
     container_statuses = getattr(status, "container_statuses", None)
     creation_timestamp = getattr(metadata, "creation_timestamp", None)
     spec = getattr(item, "spec", None)
@@ -333,7 +332,7 @@ def pod_summary_from_api_item(
     return PodSummary(
         name=name,
         ready=pod_ready(container_statuses),
-        status=reason if isinstance(reason, str) and reason else phase,
+        status=pod_detailed_status(item),
         restarts=pod_restarts(container_statuses),
         age=format_age(creation_timestamp, now=now),
         containers=container_summary(containers),
@@ -358,6 +357,87 @@ def pod_summary_from_api_item(
         owners=owner_lines(getattr(metadata, "owner_references", None)),
         container_details=pod_container_detail_lines(containers, container_statuses, metrics),
     )
+
+
+def pod_detailed_status(item: Any) -> str:
+    """Derive a detailed pod status like k9s.
+
+    Inspects container and init-container states first (CrashLoopBackOff,
+    ImagePullBackOff, OOMKilled, ContainerCreating, Init:*), then falls back to
+    the pod's reason and phase. Terminating is detected via the deletion
+    timestamp.
+    """
+    status = getattr(item, "status", None)
+    metadata = getattr(item, "metadata", None)
+    if status is not None and getattr(metadata, "deletion_timestamp", None) is not None:
+        return "Terminating"
+
+    phase = getattr(status, "phase", None)
+    reason = getattr(status, "reason", None)
+
+    container_statuses = getattr(status, "container_statuses", None)
+    init_container_statuses = getattr(status, "init_container_statuses", None)
+
+    if phase == "Running" and container_statuses:
+        container_status = _first_non_ready(container_statuses)
+        if container_status is not None:
+            detailed = _container_state_status(container_status)
+            if detailed:
+                return detailed
+
+    if init_container_statuses:
+        init_status = _first_non_ready(init_container_statuses)
+        if init_status is not None:
+            state = getattr(init_status, "state", None)
+            running = getattr(state, "running", None)
+            waiting = getattr(state, "waiting", None)
+            if running is not None:
+                return "Init:Running"
+            if waiting is not None:
+                reason_wait = getattr(waiting, "reason", None)
+                if isinstance(reason_wait, str) and reason_wait:
+                    return f"Init:{reason_wait}"
+            return "Init:Error"
+
+    if isinstance(reason, str) and reason:
+        return reason
+    if isinstance(phase, str) and phase:
+        return phase
+    return "Unknown"
+
+
+def _first_non_ready(statuses: Any) -> Any:
+    if not isinstance(statuses, list):
+        return None
+    for container_status in statuses:
+        if not getattr(container_status, "ready", False):
+            return container_status
+    return None
+
+
+def _container_state_status(container_status: Any) -> str | None:
+    state = getattr(container_status, "state", None)
+    if state is None:
+        return None
+    running = getattr(state, "running", None)
+    if running is not None:
+        return None
+    waiting = getattr(state, "waiting", None)
+    if waiting is not None:
+        reason = getattr(waiting, "reason", None)
+        if isinstance(reason, str) and reason:
+            return reason
+        return "ContainerCreating"
+    terminated = getattr(state, "terminated", None)
+    if terminated is not None:
+        reason = getattr(terminated, "reason", None)
+        if isinstance(reason, str) and reason:
+            return reason
+        exit_code = getattr(terminated, "exit_code", None)
+        if exit_code is not None and int(exit_code) != 0:
+            return f"Error:{exit_code}"
+        return "Completed"
+    return None
 
 
 def container_summaries_from_pod(item: Any) -> list[ContainerSummary]:

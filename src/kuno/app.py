@@ -1787,7 +1787,15 @@ class KunoApp(App[None]):
 
             def _pod_status(p):
                 status = p.status
-                if status in ("Error", "CrashLoopBackOff", "Failed", "Evicted"):
+                if status in (
+                    "Error",
+                    "CrashLoopBackOff",
+                    "Failed",
+                    "Evicted",
+                    "OOMKilled",
+                    "ImagePullBackOff",
+                    "ErrImagePull",
+                ) or status.startswith("Init:Error"):
                     return Text(status, style="bold red")
                 if status in ("Succeeded", "Completed"):
                     return Text(status, style="dim green")
