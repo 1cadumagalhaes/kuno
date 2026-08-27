@@ -24,7 +24,7 @@ async def test_kube_client_connects(monkeypatch) -> None:
         assert context == "prod"
         return fake_api_client
 
-    monkeypatch.setattr("kuno.k8s.client.new_client_from_config", fake_new_client_from_config)
+    monkeypatch.setattr("kuno.k8s.client._new_client_from_config", fake_new_client_from_config)
 
     client = KubeClient(context="prod")
     await client.connect()
@@ -45,7 +45,7 @@ async def test_kube_client_closes(monkeypatch) -> None:
         assert context == "prod"
         return fake_api_client
 
-    monkeypatch.setattr("kuno.k8s.client.new_client_from_config", fake_new_client_from_config)
+    monkeypatch.setattr("kuno.k8s.client._new_client_from_config", fake_new_client_from_config)
 
     client = KubeClient(context="prod")
     await client.connect()
@@ -68,7 +68,7 @@ async def test_kube_client_context_manager(monkeypatch) -> None:
         assert context == "prod"
         return fake_api_client
 
-    monkeypatch.setattr("kuno.k8s.client.new_client_from_config", fake_new_client_from_config)
+    monkeypatch.setattr("kuno.k8s.client._new_client_from_config", fake_new_client_from_config)
 
     client: KubeClient | None = None
     async with KubeClient(context="prod") as kube_client:

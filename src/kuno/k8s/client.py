@@ -1,7 +1,15 @@
 from __future__ import annotations
 
-from kubernetes_asyncio.client import ApiClient, AppsV1Api, CoreV1Api, CustomObjectsApi
-from kubernetes_asyncio.config import new_client_from_config
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from kubernetes_asyncio.client import ApiClient, AppsV1Api, CoreV1Api, CustomObjectsApi
+
+
+def _new_client_from_config(*, config_file: str | None, context: str):
+    from kubernetes_asyncio.config import new_client_from_config
+
+    return new_client_from_config(config_file=config_file, context=context)
 
 
 class KubeClient:
@@ -36,7 +44,9 @@ class KubeClient:
                 self.apps_v1 = shared.apps_v1
                 self.custom_objects = shared.custom_objects
                 return
-        api_client = await new_client_from_config(
+        from kubernetes_asyncio.client import AppsV1Api, CoreV1Api, CustomObjectsApi
+
+        api_client = await _new_client_from_config(
             config_file=self.config_file,
             context=self.context,
         )

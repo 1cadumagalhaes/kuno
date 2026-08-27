@@ -98,7 +98,7 @@ def test_load_context_summaries_marks_current_context(monkeypatch) -> None:
     ]
 
     monkeypatch.setattr(
-        "kuno.k8s.config.list_kube_config_contexts",
+        "kuno.k8s.config._list_kube_config_contexts",
         lambda config_file=None: (kube_contexts, kube_contexts[1]),
     )
 

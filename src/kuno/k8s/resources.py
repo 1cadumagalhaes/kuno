@@ -3,10 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any, Protocol, cast
-
-import yaml
-from kubernetes_asyncio.client import AppsV1Api, CoreV1Api, CustomObjectsApi
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from kuno.models import (
     ContainerSummary,
@@ -20,6 +17,9 @@ from kuno.models import (
     ServiceSummary,
     StatefulSetSummary,
 )
+
+if TYPE_CHECKING:
+    from kubernetes_asyncio.client import AppsV1Api, CoreV1Api, CustomObjectsApi
 
 
 class HasCoreV1(Protocol):
@@ -1086,6 +1086,8 @@ async def get_resource_yaml(
     kube_client: HasCoreAndAppsV1, namespace: str, kind: str, name: str
 ) -> str:
     item = await _read_resource(kube_client, namespace, kind, name)
+    import yaml
+
     return yaml.dump(item.to_dict(), default_flow_style=False, sort_keys=False)
 
 

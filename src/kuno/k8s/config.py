@@ -3,8 +3,6 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from kubernetes_asyncio.config import list_kube_config_contexts
-
 from kuno.models import ContextSummary, StartupConfig
 
 DEFAULT_NAMESPACE = "default"
@@ -16,21 +14,27 @@ class UnknownContextError(ValueError):
     pass
 
 
+def _list_kube_config_contexts(config_file: str | None = None):
+    from kubernetes_asyncio.config import list_kube_config_contexts
+
+    return list_kube_config_contexts(config_file=config_file)
+
+
 def load_startup_targets(
     startup_config: StartupConfig,
     config_file: str | None = None,
 ) -> StartupConfig:
-    contexts, current_context = list_kube_config_contexts(config_file=config_file)
+    contexts, current_context = _list_kube_config_contexts(config_file=config_file)
     return resolve_startup_targets(startup_config, contexts, current_context)
 
 
 def load_available_context_names(config_file: str | None = None) -> list[str]:
-    contexts, _ = list_kube_config_contexts(config_file=config_file)
+    contexts, _ = _list_kube_config_contexts(config_file=config_file)
     return sorted(context_name(context) for context in contexts)
 
 
 def load_context_summaries(config_file: str | None = None) -> list[ContextSummary]:
-    contexts, current_context = list_kube_config_contexts(config_file=config_file)
+    contexts, current_context = _list_kube_config_contexts(config_file=config_file)
     current_name = context_name(current_context) if current_context is not None else None
     summaries = [context_summary(context, current_name=current_name) for context in contexts]
     return sorted(summaries, key=lambda summary: summary.name)
