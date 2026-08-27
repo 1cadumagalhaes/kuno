@@ -89,6 +89,7 @@ class LogView(ScrollView, can_focus=True):
         cell_w = cell_len(line.expandtabs())
         if cell_w > self._max_cell_width:
             self._max_cell_width = cell_w
+        self._prune_max_lines()
         self._update_virtual_size()
         if self.auto_scroll:
             self.scroll_end(animate=False, immediate=True, x_axis=False)
@@ -109,6 +110,7 @@ class LogView(ScrollView, can_focus=True):
             cell_w = cell_len(line.expandtabs())
             if cell_w > self._max_cell_width:
                 self._max_cell_width = cell_w
+        self._prune_max_lines()
         self._update_virtual_size()
         if self.auto_scroll:
             self.scroll_end(animate=False, immediate=True, x_axis=False)

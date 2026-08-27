@@ -88,7 +88,10 @@ def parse_log_line(line: str) -> ParsedLogLine:
 
 
 def format_log_line(line: str, mode: LogMode) -> list[str]:
-    parsed = parse_log_line(line)
+    return format_parsed_log_line(parse_log_line(line), mode)
+
+
+def format_parsed_log_line(parsed: ParsedLogLine, mode: LogMode) -> list[str]:
     if mode is LogMode.RAW:
         return [parsed.raw]
     return [_structured_line(parsed)]
