@@ -23,6 +23,9 @@ from kuno.commands import ParsedCommand, parse_command, suggest_commands
         (":svc", ParsedCommand(name="svc")),
         (":ns airflow", ParsedCommand(name="ns", argument="airflow")),
         (":ctx prod", ParsedCommand(name="ctx", argument="prod")),
+        (":clear-failed", ParsedCommand(name="clear-failed")),
+        (":clear-succeeded", ParsedCommand(name="clear-succeeded")),
+        (":clear-evicted", ParsedCommand(name="clear-evicted")),
         # Aliases
         (":delete", ParsedCommand(name="del")),
         (":services", ParsedCommand(name="svc")),
@@ -50,6 +53,9 @@ def test_parse_command_rejects_invalid_input(raw: str) -> None:
             [
                 "about",
                 "back",
+                "clear-evicted",
+                "clear-failed",
+                "clear-succeeded",
                 "config",
                 "containers",
                 "contexts",

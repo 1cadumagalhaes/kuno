@@ -5,6 +5,9 @@ from dataclasses import dataclass
 COMMANDS = (
     "about",
     "back",
+    "clear-evicted",
+    "clear-failed",
+    "clear-succeeded",
     "config",
     "containers",
     "contexts",
@@ -60,6 +63,9 @@ def parse_command(raw: str) -> ParsedCommand:
     no_arg_commands = {
         "about",
         "back",
+        "clear-evicted",
+        "clear-failed",
+        "clear-succeeded",
         "config",
         "containers",
         "contexts",

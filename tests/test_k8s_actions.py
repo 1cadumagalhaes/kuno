@@ -3,7 +3,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from kuno.k8s.actions import delete_resource, restart_resource, rollout_restart_patch
+from kuno.k8s.actions import (
+    delete_pods,
+    delete_resource,
+    list_pods_to_clear,
+    restart_resource,
+    rollout_restart_patch,
+)
 from kuno.models import ExplorerView
 
 
@@ -112,3 +118,56 @@ async def test_restart_resource_rejects_unsupported_view() -> None:
         await restart_resource(
             kube_client, view=ExplorerView.PODS, name="api-1", namespace="payments"
         )
+
+
+@pytest.mark.asyncio
+async def test_list_pods_to_clear_filters_by_status() -> None:
+    items = [
+        SimpleNamespace(
+            metadata=SimpleNamespace(name="job-fail"),
+            status=SimpleNamespace(phase="Failed", reason=None),
+        ),
+        SimpleNamespace(
+            metadata=SimpleNamespace(name="job-ok"),
+            status=SimpleNamespace(phase="Succeeded", reason=None),
+        ),
+        SimpleNamespace(
+            metadata=SimpleNamespace(name="job-evicted"),
+            status=SimpleNamespace(phase="Failed", reason="Evicted"),
+        ),
+        SimpleNamespace(
+            metadata=SimpleNamespace(name="job-running"),
+            status=SimpleNamespace(phase="Running", reason=None),
+        ),
+    ]
+
+    class FakeCoreV1:
+        async def list_namespaced_pod(self, namespace: str) -> SimpleNamespace:
+            assert namespace == "payments"
+            return SimpleNamespace(items=items)
+
+    kube_client = SimpleNamespace(core_v1=FakeCoreV1())
+
+    assert await list_pods_to_clear(
+        kube_client, "payments", statuses={"Failed", "Succeeded", "Evicted"}
+    ) == ["job-fail", "job-ok", "job-evicted"]
+    assert await list_pods_to_clear(kube_client, "payments", statuses={"Failed"}) == [
+        "job-fail",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_delete_pods_deletes_each_pod() -> None:
+    deleted: list[str] = []
+
+    class FakeCoreV1:
+        async def delete_namespaced_pod(self, name: str, namespace: str) -> None:
+            assert namespace == "payments"
+            deleted.append(name)
+
+    kube_client = SimpleNamespace(core_v1=FakeCoreV1())
+
+    count = await delete_pods(kube_client, "payments", ["a", "b", "c"])
+
+    assert count == 3
+    assert deleted == ["a", "b", "c"]

@@ -78,6 +78,7 @@ Press `:` to open the command bar, or `ctrl+p` for the Textual system command pa
 | `N` | Jump to **Namespaces** view |
 | `ctrl+d` | **Delete** selected resource (with confirmation) |
 | `ctrl+r` | **Restart** selected deployment/statefulset (with confirmation) |
+| `ctrl+x` | **Clear failed** pods in current namespace (with confirmation) |
 | `ctrl+e` | View **Events** |
 | `ctrl+o` | **Sort** cycle |
 | `Backspace` | Go back |
@@ -104,6 +105,7 @@ Press `:` to open the command bar, or `ctrl+p` for the Textual system command pa
 | `:events` | view events |
 | `:del` / `:delete` | delete selected resource (with confirmation) |
 | `:restart` | rollout restart selected resource (with confirmation) |
+| `:clear-failed` / `:clear-succeeded` / `:clear-evicted` | delete all pods in a terminal state for the current namespace (with confirmation) |
 | `:info` / `:hide-info` | toggle the info side panel |
 | `:config` | open config screen |
 | `:theme [name]` | cycle or set theme |
@@ -154,6 +156,8 @@ tail_lines = 500
 ```
 
 `theme` accepts any [Textual built-in theme](https://textual.textualize.io/guide/design/#themes). `yaml_theme` accepts any Pygments style name.
+
+kuno remembers the last namespace you used per context (stored in `~/.cache/kuno/state.json`), so switching back to a context restores the namespace you had selected.
 
 ## Development
 

@@ -2708,3 +2708,39 @@ async def test_confirm_dialog_arrow_keys_move_focus(monkeypatch) -> None:
         await pilot.press("left")
         await pilot.pause()
         assert app.screen.query_one("#confirm-no", Button).has_focus
+
+
+@pytest.mark.asyncio
+async def test_clear_failed_command_opens_confirmation(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_pods_to_clear(kube_client, namespace, *, statuses) -> list[str]:
+        assert statuses == {"Failed"}
+        return ["job-fail-1", "job-fail-2"]
+
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_pods_to_clear", fake_list_pods_to_clear)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.execute_command("clear-failed")
+        await pilot.pause()
+        confirm_title = app.screen.query_one("#confirm-title", Static)
+        assert str(confirm_title.content) == "Clear pods"
+        confirm_message = app.screen.query_one("#confirm-message", Static)
+        assert "2 failed pods" in str(confirm_message.content)

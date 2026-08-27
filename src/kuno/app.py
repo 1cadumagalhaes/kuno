@@ -20,7 +20,12 @@ from textual.widgets import Button, DataTable, Footer, Input, Select, Static, Sw
 
 from kuno.commands import ParsedCommand, parse_command, suggest_commands
 from kuno.config import DEFAULT_CONFIG_PATH, KunoConfig, save_config
-from kuno.k8s.actions import delete_resource, restart_resource
+from kuno.k8s.actions import (
+    delete_pods,
+    delete_resource,
+    list_pods_to_clear,
+    restart_resource,
+)
 from kuno.k8s.client import KubeClient
 from kuno.k8s.config import (
     UnknownContextError,
@@ -1413,6 +1418,7 @@ class KunoApp(App[None]):
         ("ctrl+d", "delete_selected", "Delete"),
         ("ctrl+r", "restart_selected", "Restart"),
         ("ctrl+e", "events_selected", "Events"),
+        ("ctrl+x", "clear_failed", "Clear Failed"),
         ("L", "open_logs", "Logs"),
         ("l", "open_logs", ""),
         ("C", "open_contexts", "Contexts"),
@@ -2112,6 +2118,21 @@ class KunoApp(App[None]):
             self._command_events,
         )
         yield SystemCommand(
+            "Clear failed pods",
+            "Delete all failed pods in the current namespace",
+            lambda: self._command_clear_pods("Failed"),
+        )
+        yield SystemCommand(
+            "Clear succeeded pods",
+            "Delete all succeeded pods in the current namespace",
+            lambda: self._command_clear_pods("Succeeded"),
+        )
+        yield SystemCommand(
+            "Clear evicted pods",
+            "Delete all evicted pods in the current namespace",
+            lambda: self._command_clear_pods("Evicted"),
+        )
+        yield SystemCommand(
             "Config",
             "Open the configuration screen",
             self._command_config,
@@ -2139,6 +2160,12 @@ class KunoApp(App[None]):
                 self._command_config()
             case "del":
                 self._command_delete()
+            case "clear-failed":
+                self._command_clear_pods("Failed")
+            case "clear-succeeded":
+                self._command_clear_pods("Succeeded")
+            case "clear-evicted":
+                self._command_clear_pods("Evicted")
             case "events":
                 self._command_events()
             case "keys":
@@ -2180,7 +2207,7 @@ class KunoApp(App[None]):
                 self._command_context(command.argument)
             case "help":
                 self.notify(
-                    "Commands: about, back, contexts, namespaces, pods, containers, deploy, sts, svc, pvc, secrets, logs, refresh, info, hide-info, del, delete, restart, theme [name], ns <ns>, ctx <ctx>"
+                    "Commands: about, back, contexts, namespaces, pods, containers, deploy, sts, svc, pvc, secrets, logs, refresh, info, hide-info, del, delete, restart, clear-failed, clear-succeeded, clear-evicted, theme [name], ns <ns>, ctx <ctx>"
                 )
             case _:
                 self.notify(f"Unknown command: {command.name}", severity="error")
@@ -2325,6 +2352,9 @@ class KunoApp(App[None]):
 
     def action_restart_selected(self) -> None:
         self._command_restart()
+
+    def action_clear_failed(self) -> None:
+        self._command_clear_pods("Failed")
 
     def action_open_contexts(self) -> None:
         if self.current_view is not ExplorerView.CONTEXTS:
@@ -2555,14 +2585,87 @@ class KunoApp(App[None]):
         if target.context is None:
             self.notify("Context is not resolved", severity="error")
             return
+        # Optimistic feedback: mark the row as deleting so it shows a
+        # "(deleting)" suffix while the API call is in flight.
+        self._pending_actions[name] = "deleting"
+        self.notify(f"Deleting {view.value.rstrip('s')}/{name} …")
         try:
-            async with KubeClient(context=target.context) as kube_client:
+            async with self._client(target.context) as kube_client:
                 await delete_resource(kube_client, view=view, name=name, namespace=namespace)
         except Exception as error:
+            self._pending_actions.pop(name, None)
             self.notify(str(error), severity="error")
+            self.refresh_current_view()
             return
 
+        self._pending_actions.pop(name, None)
         self.notify(f"Deleted {view.value.rstrip('s')}/{name}")
+        self.refresh_current_view()
+
+    def _command_clear_pods(self, status: str) -> None:
+        target = self._require_target()
+        if target.namespace is None:
+            self.notify("Namespace is not resolved", severity="error")
+            return
+        self._clear_pods_async(status, target.namespace)
+
+    @work(exclusive=True)
+    async def _clear_pods_async(self, status: str, namespace: str) -> None:
+        target = self._require_target()
+        if target.context is None:
+            self.notify("Context is not resolved", severity="error")
+            return
+        label = status.lower()
+        try:
+            async with self._client(target.context) as kube_client:
+                pods = await list_pods_to_clear(kube_client, namespace, statuses={status})
+                if not pods:
+                    self.notify(f"No {label} pods to clear in {namespace}")
+                    return
+                count = len(pods)
+                self.push_screen(
+                    ConfirmActionScreen(
+                        "Clear pods",
+                        f"Delete {count} {label} pod{'s' if count != 1 else ''} in namespace {namespace}?",
+                    ),
+                    callback=lambda confirmed: self._handle_clear_confirmation(
+                        confirmed, pods, namespace
+                    ),
+                )
+        except Exception as error:
+            self.notify(str(error), severity="error")
+
+    def _handle_clear_confirmation(
+        self,
+        confirmed: bool | None,
+        pods: list[str],
+        namespace: str,
+    ) -> None:
+        if not confirmed:
+            return
+        target = self._require_target()
+        if target.context is None:
+            self.notify("Context is not resolved", severity="error")
+            return
+        self._perform_clear(target.context, pods, namespace)
+
+    @work(exclusive=True)
+    async def _perform_clear(self, context: str, pods: list[str], namespace: str) -> None:
+        for pod in pods:
+            self._pending_actions[pod] = "deleting"
+        self.notify(f"Deleting {len(pods)} pod(s) …")
+        try:
+            async with self._client(context) as kube_client:
+                deleted = await delete_pods(kube_client, namespace, pods)
+        except Exception as error:
+            self.notify(str(error), severity="error")
+            for pod in pods:
+                self._pending_actions.pop(pod, None)
+            self.refresh_current_view()
+            return
+        for pod in pods:
+            self._pending_actions.pop(pod, None)
+        self.notify(f"Deleted {deleted} pod(s)")
         self.refresh_current_view()
 
     def _command_restart(self) -> None:
@@ -3198,4 +3301,3 @@ def _update_screen_breadcrumb(screen: Screen, parts: list[tuple[str, str]]) -> N
             text.append(" > ", style="dim")
         text.append(f" {label} ", style=f"bold white on {hex_bg}")
     screen.query_one("#breadcrumb", Static).update(text)
-
