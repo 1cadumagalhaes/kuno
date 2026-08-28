@@ -45,6 +45,7 @@ class KubeClient:
         self.core_v1 = CoreV1Api(api_client)
         self.apps_v1 = AppsV1Api(api_client)
         self.custom_objects = CustomObjectsApi(api_client)
+
     async def close(self) -> None:
         if self._reuse:
             # The owner of a reused client closes its connection at shutdown.

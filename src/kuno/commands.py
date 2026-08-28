@@ -35,6 +35,7 @@ COMMANDS = (
     "svc",
     "theme",
     "ctx",
+    "version",
 )
 
 
@@ -85,6 +86,7 @@ def parse_command(raw: str) -> ParsedCommand:
         "secrets",
         "sts",
         "svc",
+        "version",
     }
 
     if normalized == "ns":

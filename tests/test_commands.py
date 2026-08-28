@@ -26,6 +26,7 @@ from kuno.commands import ParsedCommand, parse_command, suggest_commands
         (":clear-failed", ParsedCommand(name="clear-failed")),
         (":clear-succeeded", ParsedCommand(name="clear-succeeded")),
         (":clear-evicted", ParsedCommand(name="clear-evicted")),
+        (":version", ParsedCommand(name="version")),
         # Aliases
         (":delete", ParsedCommand(name="del")),
         (":services", ParsedCommand(name="svc")),
@@ -83,6 +84,7 @@ def test_parse_command_rejects_invalid_input(raw: str) -> None:
                 "svc",
                 "theme",
                 "ctx",
+                "version",
             ],
         ),
         ("co", ["config", "containers", "contexts"]),

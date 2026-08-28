@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from importlib.metadata import PackageNotFoundError, version as package_version
 import time
 from collections.abc import Iterable
 from contextlib import suppress
@@ -224,7 +225,9 @@ class ShortcutScreen(ModalScreen[None]):
             )
         if self.screen_name == "detail":
             return "[bold cyan]CURRENT SCREEN: DETAIL[/bold cyan]\n[bold]Escape[/bold] closes  ·  [bold]j/k/g/G[/bold] scroll"
-        return f"[bold cyan]CURRENT VIEW: {current.upper()}[/bold cyan]\n{self._current_view_help()}"
+        return (
+            f"[bold cyan]CURRENT VIEW: {current.upper()}[/bold cyan]\n{self._current_view_help()}"
+        )
 
     def action_close(self) -> None:
         self.dismiss(None)
@@ -597,7 +600,9 @@ class LogsScreen(Screen[None]):
                 if start is not None and end is not None:
                     start_line, end_line = sorted((start[0], end[0]))
                     visible = self._visible_log_indices()
-                    raw_lines = (self.log_lines[visible[index]] for index in range(start_line, end_line + 1))
+                    raw_lines = (
+                        self.log_lines[visible[index]] for index in range(start_line, end_line + 1)
+                    )
                     return "\n".join(
                         rendered_line
                         for raw_line in raw_lines
@@ -610,7 +615,9 @@ class LogsScreen(Screen[None]):
         # No mouse text selection: fall back to the currently highlighted line.
         if 0 <= self.selected_log_index < len(self.log_lines):
             if rendered:
-                return "\n".join(format_log_line(self.log_lines[self.selected_log_index], self.mode))
+                return "\n".join(
+                    format_log_line(self.log_lines[self.selected_log_index], self.mode)
+                )
             return self.log_lines[self.selected_log_index]
         return None
 
@@ -2195,6 +2202,7 @@ class KunoApp(App[None]):
 
     def get_system_commands(self, screen) -> Iterable[SystemCommand]:
         yield SystemCommand("About", "Show information about kuno", self._command_about)
+        yield SystemCommand("Version", "Show the installed kuno version", self._command_version)
         if self.current_view not in (ExplorerView.NAMESPACES, ExplorerView.CONTEXTS):
             yield SystemCommand("Back", "Return to the previous explorer view", self.action_go_back)
         if screen.query("HelpPanel"):
@@ -2352,6 +2360,8 @@ class KunoApp(App[None]):
         match command.name:
             case "about":
                 self._command_about()
+            case "version":
+                self._command_version()
             case "back":
                 self.action_go_back()
             case "containers":
@@ -2416,6 +2426,13 @@ class KunoApp(App[None]):
 
     def _command_about(self) -> None:
         self.push_screen(AboutScreen())
+
+    def _command_version(self) -> None:
+        try:
+            current_version = package_version("kuno")
+        except PackageNotFoundError:
+            current_version = "development"
+        self.notify(f"kuno {current_version}")
 
     def action_show_shortcuts(self) -> None:
         screen_name = None
