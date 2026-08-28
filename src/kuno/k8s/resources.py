@@ -302,6 +302,50 @@ async def list_pods_for_workload(
     ]
 
 
+async def get_pod_workload(
+    kube_client: HasCoreAndAppsV1, namespace: str, pod_name: str
+) -> tuple[str, str] | None:
+    """Resolve a pod's owning workload, following ReplicaSet to Deployment."""
+    pod = await _read_resource(kube_client, namespace, "pod", pod_name)
+    metadata = getattr(pod, "metadata", None)
+    owners = getattr(metadata, "owner_references", None) or []
+    owner = next(
+        (
+            reference
+            for reference in owners
+            if getattr(reference, "controller", True)
+            and getattr(reference, "name", None)
+            and getattr(reference, "kind", None)
+        ),
+        None,
+    )
+    if owner is None:
+        return None
+
+    kind = str(owner.kind).lower()
+    name = str(owner.name)
+    if kind == "deployment":
+        return "deployment", name
+    if kind != "replicaset":
+        return None
+    if kube_client.apps_v1 is None:
+        raise RuntimeError("Kubernetes client is not connected")
+
+    replica_set = await kube_client.apps_v1.read_namespaced_replica_set(name, namespace)
+    replica_set_metadata = getattr(replica_set, "metadata", None)
+    replica_set_owners = getattr(replica_set_metadata, "owner_references", None) or []
+    deployment = next(
+        (
+            reference
+            for reference in replica_set_owners
+            if str(getattr(reference, "kind", "")).lower() == "deployment"
+            and getattr(reference, "name", None)
+        ),
+        None,
+    )
+    return ("deployment", str(deployment.name)) if deployment is not None else None
+
+
 def pod_summary_from_api_item(
     item: Any,
     now: datetime | None = None,

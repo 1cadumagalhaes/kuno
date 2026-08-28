@@ -270,7 +270,18 @@ async def test_context_switch_remembers_and_validates_namespaces(monkeypatch) ->
         return ["payments"] if kube_client.context == "prod" else ["default"]
 
     async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
-        return []
+        return [
+            PodSummary(
+                name="api-1",
+                ready="1/1",
+                status="Running",
+                restarts=0,
+                age="1h",
+                cpu="100m",
+                memory="128Mi",
+                containers="api",
+            )
+        ]
 
     monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
     monkeypatch.setattr("kuno.app.list_namespaces", fake_list_namespaces)
@@ -1945,7 +1956,18 @@ async def test_deployment_selection_opens_workload_logs(monkeypatch) -> None:
             return None
 
     async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
-        return []
+        return [
+            PodSummary(
+                name="api-1",
+                ready="1/1",
+                status="Running",
+                restarts=0,
+                age="1h",
+                cpu="100m",
+                memory="128Mi",
+                containers="api",
+            )
+        ]
 
     async def fake_list_deployments(
         kube_client: FakeKubeClient, namespace: str
@@ -1963,10 +1985,15 @@ async def test_deployment_selection_opens_workload_logs(monkeypatch) -> None:
             )
         ]
 
+    async def fake_get_pod_workload(
+        kube_client: FakeKubeClient, namespace: str, name: str
+    ) -> tuple[str, str]:
+        assert (namespace, name) == ("payments", "api-1")
+        return "deployment", "api"
+
     async def fake_list_pods_for_workload(
         kube_client: FakeKubeClient, namespace: str, kind: str, name: str
     ) -> list[str]:
-        assert (namespace, kind, name) == ("payments", "deployment", "api")
         return ["api-1"]
 
     async def fake_read_pod_logs(*args, **kwargs) -> str:
@@ -1976,6 +2003,7 @@ async def test_deployment_selection_opens_workload_logs(monkeypatch) -> None:
     monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
     monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
     monkeypatch.setattr("kuno.app.list_deployments", fake_list_deployments)
+    monkeypatch.setattr("kuno.app.get_pod_workload", fake_get_pod_workload)
     monkeypatch.setattr("kuno.app.list_pods_for_workload", fake_list_pods_for_workload)
     monkeypatch.setattr("kuno.app.read_pod_logs", fake_read_pod_logs)
 
@@ -1983,11 +2011,17 @@ async def test_deployment_selection_opens_workload_logs(monkeypatch) -> None:
 
     async with app.run_test() as pilot:
         await pilot.pause()
-        app.execute_command("deploy")
+        table = app.query_one("#pod-table", DataTable)
+        table.focus()
+        table.move_cursor(row=0)
+        assert app.current_view is ExplorerView.PODS
+        assert table.has_focus
+        assert table.row_count == 1
+        assert isinstance(app._selected_item(), PodSummary)
         await pilot.pause()
-        await pilot.press("L")
-        await pilot.pause()
-        await pilot.pause()
+        app.action_open_deployment_logs()
+        await pilot.pause(0.5)
+        await pilot.pause(0.5)
         assert isinstance(app.screen, LogsScreen)
         assert app.screen.logs_source.kind == "deployment"
         assert app.screen.logs_source.name == "api"

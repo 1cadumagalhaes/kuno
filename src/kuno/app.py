@@ -34,6 +34,7 @@ from kuno.k8s.config import (
     load_startup_targets,
 )
 from kuno.k8s.resources import (
+    get_pod_workload,
     get_resource_events,
     get_resource_yaml,
     list_deployments,
@@ -227,6 +228,20 @@ class ShortcutScreen(ModalScreen[None]):
 
     def action_close(self) -> None:
         self.dismiss(None)
+
+
+class ExplorerTable(DataTable):
+    BINDINGS = [Binding("ctrl+l", "open_deployment_logs", "", show=False, priority=True)]
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key.lower() == "ctrl+l" or event.character == "\x0c":
+            event.stop()
+            self.action_open_deployment_logs()
+
+    def action_open_deployment_logs(self) -> None:
+        app = self.app
+        if isinstance(app, KunoApp):
+            app.action_open_deployment_logs()
 
 
 class SplashScreen(Screen):
@@ -1589,6 +1604,7 @@ class KunoApp(App[None]):
         Binding("ctrl+r", "restart_selected", "Restart", show=False),
         Binding("ctrl+e", "events_selected", "Events", show=False),
         Binding("ctrl+x", "clear_failed", "Clear Failed", show=False),
+        Binding("ctrl+l", "open_deployment_logs", "Workload Logs", show=False),
         ("L", "open_logs", "Logs"),
         ("l", "open_logs", ""),
         ("C", "open_contexts", "Contexts"),
@@ -1678,7 +1694,7 @@ class KunoApp(App[None]):
         yield Static("", id="breadcrumb")
         with Horizontal(id="explorer"):
             with Vertical(id="pod-panel"):
-                yield DataTable(id="pod-table")
+                yield ExplorerTable(id="pod-table")
             with VerticalScroll(id="info-panel"):
                 yield Static(f"{self._view_singular()}\n(loading)", id="pod-info")
         with Vertical(id="command-area"):
@@ -1731,6 +1747,11 @@ class KunoApp(App[None]):
         self.refresh_current_view()
         self.set_interval(2, self.refresh_current_view)
         self._dblog("on_mount done")
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key.lower() == "ctrl+l" and isinstance(self.screen, Screen):
+            event.stop()
+            self.action_open_deployment_logs()
 
     async def on_unmount(self) -> None:
         await self._close_clients()
@@ -2517,6 +2538,50 @@ class KunoApp(App[None]):
 
     def action_open_logs(self) -> None:
         self._command_logs()
+
+    def action_open_deployment_logs(self) -> None:
+        if self.current_view is not ExplorerView.PODS:
+            return
+        pod = self._selected_item()
+        target = self._require_target()
+        if not isinstance(pod, PodSummary) or target.context is None or target.namespace is None:
+            self.notify("No pod selected", severity="warning")
+            return
+        self._open_deployment_logs_async(pod.name, target)
+
+    @work
+    async def _open_deployment_logs_async(self, pod_name: str, target: StartupConfig) -> None:
+        if target.context is None or target.namespace is None:
+            return
+        try:
+            async with self._client(target.context) as kube_client:
+                workload = await get_pod_workload(kube_client, target.namespace, pod_name)
+                if workload is not None and workload[0] == "deployment":
+                    pod_names = await list_pods_for_workload(
+                        kube_client, target.namespace, workload[0], workload[1]
+                    )
+        except Exception as error:
+            self.notify(f"Failed to resolve workload for {pod_name}: {error}", severity="error")
+            return
+        if workload is None or workload[0] != "deployment":
+            self.notify(f"{pod_name} is not owned by a deployment", severity="warning")
+            return
+        if not pod_names:
+            self.notify(f"No pods found for deployment/{workload[1]}", severity="warning")
+            return
+        self.push_screen(
+            LogsScreen(
+                context=target.context,
+                namespace=target.namespace,
+                logs_source=WorkloadSource(
+                    kind="deployment",
+                    name=workload[1],
+                    pod_names=pod_names,
+                    namespace=target.namespace,
+                ),
+                kuno_config=self.kuno_config,
+            )
+        )
 
     def action_next_row(self) -> None:
         table = self.query_one("#pod-table", DataTable)
