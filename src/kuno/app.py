@@ -117,6 +117,101 @@ class AboutScreen(ModalScreen[None]):
         self.dismiss(None)
 
 
+class ShortcutScreen(ModalScreen[None]):
+    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("escape", "close", "Close")]
+
+    def __init__(self, current_view: ExplorerView, screen_name: str | None = None) -> None:
+        super().__init__()
+        self.current_view = current_view
+        self.screen_name = screen_name
+
+    def _current_view_help(self) -> str:
+        return {
+            ExplorerView.CONTEXTS: "[bold]Enter[/bold]      Switch to the highlighted context\n[bold]C[/bold]          Reopen contexts",
+            ExplorerView.NAMESPACES: "[bold]Enter[/bold]      Switch to the highlighted namespace\n[bold]N[/bold]          Reopen namespaces",
+            ExplorerView.PODS: "[bold]Enter[/bold]      Open containers\n[bold]L / l[/bold]      Open pod logs\n[bold]Ctrl+X[/bold]    Clear pods by status",
+            ExplorerView.CONTAINERS: "[bold]Enter[/bold]      Open container logs\n[bold]L / l[/bold]      Open logs\n[bold]d[/bold]          Describe container",
+            ExplorerView.DEPLOYMENTS: "[bold]Enter[/bold]      Open deployment details\n[bold]L / l[/bold]      Open workload logs\n[bold]d[/bold]          Describe deployment",
+            ExplorerView.STATEFULSETS: "[bold]Enter[/bold]      Open statefulset details\n[bold]L / l[/bold]      Open workload logs\n[bold]d[/bold]          Describe statefulset",
+            ExplorerView.SERVICES: "[bold]Enter[/bold]      Open service details\n[bold]d[/bold]          Describe service",
+            ExplorerView.PVC: "[bold]Enter[/bold]      Open PVC details\n[bold]d[/bold]          Describe PVC",
+            ExplorerView.SECRETS: "[bold]Enter[/bold]      Open secret details\n[bold]d[/bold]          Describe secret",
+        }[self.current_view]
+
+    def compose(self) -> ComposeResult:
+        current = self.current_view.value.title()
+        yield Vertical(
+            Vertical(
+                Static("SHORTCUTS", id="shortcuts-title"),
+                Static(
+                    "The active view's commands are shown first. Press ? or Escape to close.",
+                    id="shortcuts-intro",
+                ),
+                Horizontal(
+                    Static(
+                        "[bold cyan]NAVIGATION[/bold cyan]\n"
+                        "[bold]j / Down[/bold] Move down  ·  [bold]k / Up[/bold] Move up\n"
+                        "[bold]g / G[/bold] Top / bottom  ·  [bold]Enter[/bold] Open highlighted\n"
+                        "[bold]Backspace[/bold] Back  ·  [bold]r[/bold] Refresh  ·  [bold]i[/bold] Info\n"
+                        "[bold]colon (:)[/bold] Command palette  ·  [bold]?[/bold] This guide",
+                        classes="shortcuts-column",
+                    ),
+                    Static(
+                        "[bold cyan]EXPLORE[/bold cyan]\n"
+                        "[bold]C[/bold] Contexts  ·  [bold]N[/bold] Namespaces\n"
+                        "[bold]l / L[/bold] Logs  ·  [bold]d[/bold] Describe  ·  [bold]y[/bold] YAML\n"
+                        "[bold]Ctrl+D[/bold] Delete  ·  [bold]Ctrl+R[/bold] Restart\n"
+                        "[bold]Ctrl+E[/bold] Events  ·  [bold]Ctrl+X[/bold] Clear failed  ·  [bold]Ctrl+O[/bold] Sort",
+                        classes="shortcuts-column",
+                    ),
+                ),
+                Static(
+                    f"[bold cyan]CURRENT VIEW: {current.upper()}[/bold cyan]\n{self._current_view_help()}",
+                    id="shortcuts-current",
+                ),
+                Static(
+                    "[bold cyan]COMMAND PALETTE[/bold cyan]\n"
+                    "Type [bold]:command[/bold], then Enter. Tab accepts a suggestion; "
+                    "Up/Down moves through suggestions; Escape closes it.",
+                    id="shortcuts-palette",
+                ),
+                Static(
+                    "[bold cyan]COMMANDS[/bold cyan]\n"
+                    "[bold]about[/bold] About  ·  [bold]back[/bold] Back  ·  [bold]ctx <name>[/bold] Context  ·  [bold]ns <name>[/bold] Namespace\n"
+                    "[bold]pods[/bold] [bold]containers[/bold] [bold]deploy[/bold] [bold]sts[/bold] [bold]svc[/bold] [bold]pvc[/bold] [bold]secrets[/bold] [bold]events[/bold] [bold]logs[/bold]  Browse views\n"
+                    "[bold]refresh[/bold] Refresh  ·  [bold]info[/bold] Info  ·  [bold]del[/bold] Delete  ·  [bold]restart[/bold] Restart  ·  [bold]theme [name][/bold] Theme\n"
+                    "[bold]clear-failed[/bold] [bold]clear-succeeded[/bold] [bold]clear-evicted[/bold]  Remove pods by status",
+                    id="shortcuts-commands",
+                ),
+                *self._screen_specific_widgets(),
+                id="shortcuts-panel",
+            ),
+            id="shortcuts-screen",
+        )
+
+    def _screen_specific_widgets(self) -> list[Static]:
+        if self.screen_name == "logs":
+            text = (
+                "[bold cyan]LOGS SCREEN[/bold cyan]\n"
+                "[bold]m[/bold] mode  ·  [bold]f[/bold] follow  ·  [bold]w[/bold] wrap  ·  "
+                "[bold]Y[/bold] rendered copy  ·  [bold]Ctrl+C[/bold] raw copy  ·  "
+                "[bold]s[/bold] since  ·  [bold]/[/bold] filter  ·  [bold]t[/bold] timestamps"
+            )
+        elif self.screen_name == "yaml":
+            text = (
+                "[bold cyan]YAML SCREEN[/bold cyan]\n"
+                "[bold]/[/bold] search  ·  [bold]n / N[/bold] next/previous match  ·  [bold]y[/bold] copy"
+            )
+        elif self.screen_name == "detail":
+            text = "[bold cyan]DETAIL SCREEN[/bold cyan]\n[bold]Escape[/bold] closes  ·  [bold]j/k/g/G[/bold] scroll"
+        else:
+            return []
+        return [Static(text, id="shortcuts-screen-specific")]
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
 class SplashScreen(Screen):
     DEFAULT_CSS = """
     SplashScreen {
@@ -1465,12 +1560,12 @@ class KunoApp(App[None]):
     MAX_COMMAND_SUGGESTIONS = 4
     BINDINGS: ClassVar[list[tuple[str, str, str] | Binding]] = [
         ("backspace", "go_back", "Back"),
-        ("d", "describe_selected", "Describe"),
-        ("i", "toggle_info", "Info"),
-        ("ctrl+d", "delete_selected", "Delete"),
-        ("ctrl+r", "restart_selected", "Restart"),
-        ("ctrl+e", "events_selected", "Events"),
-        ("ctrl+x", "clear_failed", "Clear Failed"),
+        Binding("d", "describe_selected", "Describe", show=False),
+        Binding("i", "toggle_info", "Info", show=False),
+        Binding("ctrl+d", "delete_selected", "Delete", show=False),
+        Binding("ctrl+r", "restart_selected", "Restart", show=False),
+        Binding("ctrl+e", "events_selected", "Events", show=False),
+        Binding("ctrl+x", "clear_failed", "Clear Failed", show=False),
         ("L", "open_logs", "Logs"),
         ("l", "open_logs", ""),
         ("C", "open_contexts", "Contexts"),
@@ -1482,8 +1577,9 @@ class KunoApp(App[None]):
         ("colon", "open_command_bar", "Command"),
         Binding("escape", "close_command_bar", "Close", show=False),
         ("r", "refresh_pods", "Refresh"),
-        ("y", "yaml_selected", "YAML"),
-        ("ctrl+o", "cycle_sort", "Sort"),
+        Binding("y", "yaml_selected", "YAML", show=False),
+        Binding("ctrl+o", "cycle_sort", "Sort", show=False),
+        Binding("question_mark", "show_shortcuts", "Shortcuts"),
     ]
 
     def __init__(
@@ -2276,6 +2372,16 @@ class KunoApp(App[None]):
 
     def _command_about(self) -> None:
         self.push_screen(AboutScreen())
+
+    def action_show_shortcuts(self) -> None:
+        screen_name = None
+        if isinstance(self.screen, LogsScreen):
+            screen_name = "logs"
+        elif isinstance(self.screen, ManifestScreen):
+            screen_name = "yaml"
+        elif isinstance(self.screen, (DescribeScreen, EventsScreen, ConfigScreen)):
+            screen_name = "detail"
+        self.push_screen(ShortcutScreen(self.current_view, screen_name))
 
     def action_go_back(self) -> None:
         if self.current_view == ExplorerView.CONTAINERS:

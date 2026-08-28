@@ -77,6 +77,46 @@ async def test_app_starts_in_pods_view(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_shortcut_guide_shows_current_view_and_commands(monkeypatch) -> None:
+    monkeypatch.setattr("kuno.app.load_startup_targets", lambda config: config)
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_pods(kube_client, namespace: str) -> list[PodSummary]:
+        return []
+
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("question_mark")
+        await pilot.pause()
+        panel = app.screen.query_one("#shortcuts-screen")
+        content = "\n".join(str(widget.render()) for widget in panel.query(Static))
+        shortcut_panel = app.screen.query_one("#shortcuts-panel")
+        assert shortcut_panel.size.width < app.size.width
+        assert "CURRENT VIEW: PODS" in content
+        assert "COMMAND PALETTE" in content
+        assert "Ctrl+X" in content
+        assert "Open containers" in content
+        assert "LOGS SCREEN" not in content
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not app.screen.query("#shortcuts-screen")
+
+
+@pytest.mark.asyncio
 async def test_app_selecting_context_opens_namespaces(monkeypatch) -> None:
     def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
         return startup_config

@@ -114,6 +114,66 @@ Screen {
     width: auto;
 }
 
+#shortcuts-screen {
+    align: center middle;
+    background: transparent;
+    height: 100%;
+    width: 100%;
+}
+
+#shortcuts-screen > Vertical {
+    background: $surface;
+    border: round $primary;
+    height: auto;
+    max-width: 100;
+    max-height: 80%;
+    min-width: 58;
+    padding: 1 2;
+    width: auto;
+}
+
+#shortcuts-screen > Vertical > Horizontal {
+    height: auto;
+    margin: 0;
+    padding: 0;
+}
+
+#shortcuts-screen Horizontal {
+    height: auto;
+}
+
+#shortcuts-screen Static {
+    height: auto;
+}
+
+#shortcuts-title {
+    color: $primary;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#shortcuts-intro {
+    color: $text-muted;
+    margin: 0 0 1 0;
+}
+
+.shortcuts-column {
+    width: 1fr;
+    padding: 0 1;
+}
+
+#shortcuts-commands {
+    margin: 1 0 0 0;
+    padding: 0 1;
+}
+
+#shortcuts-current,
+#shortcuts-palette,
+#shortcuts-screen-specific {
+    margin: 1 0 0 0;
+    padding: 0 1;
+}
+
 LogsScreen {
     layout: vertical;
 }
