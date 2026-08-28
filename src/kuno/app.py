@@ -166,7 +166,7 @@ class ShortcutScreen(ModalScreen[None]):
                     ),
                 ),
                 Static(
-                    f"[bold cyan]CURRENT VIEW: {current.upper()}[/bold cyan]\n{self._current_view_help()}",
+                    self._active_context_help(current),
                     id="shortcuts-current",
                 ),
                 Static(
@@ -183,7 +183,6 @@ class ShortcutScreen(ModalScreen[None]):
                     "[bold]clear-failed[/bold] [bold]clear-succeeded[/bold] [bold]clear-evicted[/bold]  Remove pods by status",
                     id="shortcuts-commands",
                 ),
-                *self._screen_specific_widgets(),
                 id="shortcuts-panel",
             ),
             id="shortcuts-screen",
@@ -207,6 +206,23 @@ class ShortcutScreen(ModalScreen[None]):
         else:
             return []
         return [Static(text, id="shortcuts-screen-specific")]
+
+    def _active_context_help(self, current: str) -> str:
+        if self.screen_name == "logs":
+            return (
+                "[bold cyan]CURRENT SCREEN: LOGS[/bold cyan]\n"
+                "[bold]m[/bold] mode  ·  [bold]f[/bold] follow  ·  [bold]w[/bold] wrap  ·  "
+                "[bold]Y[/bold] rendered copy  ·  [bold]Ctrl+C[/bold] raw copy  ·  "
+                "[bold]s[/bold] since  ·  [bold]/[/bold] filter  ·  [bold]t[/bold] timestamps"
+            )
+        if self.screen_name == "yaml":
+            return (
+                "[bold cyan]CURRENT SCREEN: YAML[/bold cyan]\n"
+                "[bold]/[/bold] search  ·  [bold]n / N[/bold] next/previous match  ·  [bold]y[/bold] copy"
+            )
+        if self.screen_name == "detail":
+            return "[bold cyan]CURRENT SCREEN: DETAIL[/bold cyan]\n[bold]Escape[/bold] closes  ·  [bold]j/k/g/G[/bold] scroll"
+        return f"[bold cyan]CURRENT VIEW: {current.upper()}[/bold cyan]\n{self._current_view_help()}"
 
     def action_close(self) -> None:
         self.dismiss(None)

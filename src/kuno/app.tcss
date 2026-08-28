@@ -127,9 +127,8 @@ Screen {
     height: auto;
     max-width: 100;
     max-height: 80%;
-    min-width: 58;
     padding: 1 2;
-    width: auto;
+    width: 88%;
 }
 
 #shortcuts-screen > Vertical > Horizontal {
