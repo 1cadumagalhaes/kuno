@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +33,12 @@ class StoreUniqueValue(argparse.Action):
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="kuno")
     parser.add_argument(
+        "-v",
+        "--version",
+        action="version",
+        version=f"%(prog)s {_get_version()}",
+    )
+    parser.add_argument(
         "-c",
         "--ctx",
         "--context",
@@ -53,6 +61,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write debug output to /tmp/kuno_debug.log",
     )
     return parser
+
+
+def _get_version() -> str:
+    try:
+        return package_version("kuno")
+    except PackageNotFoundError:
+        return "development"
 
 
 def parse_args(argv: Sequence[str] | None = None) -> tuple[StartupConfig, bool]:

@@ -1,6 +1,6 @@
 import pytest
 
-from kuno.cli import parse_args
+from kuno.cli import build_parser, parse_args
 from kuno.models import StartupConfig
 
 
@@ -39,3 +39,12 @@ def test_parse_args_rejects_conflicting_context_values() -> None:
 def test_parse_args_rejects_conflicting_namespace_values() -> None:
     with pytest.raises(SystemExit):
         parse_args(["-n", "payments", "--namespace", "billing"])
+
+
+@pytest.mark.parametrize("flag", ["-v", "--version"])
+def test_version_flag(capsys: pytest.CaptureFixture[str], flag: str) -> None:
+    with pytest.raises(SystemExit) as error:
+        build_parser().parse_args([flag])
+
+    assert error.value.code == 0
+    assert capsys.readouterr().out == "kuno 0.2.0\n"
