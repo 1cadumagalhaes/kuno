@@ -25,11 +25,21 @@ class ParsedLogLine:
     message: str | None
     category: str | None
     fields: dict[str, Any]
+    prefix: str = ""
 
 
 def parse_log_line(line: str) -> ParsedLogLine:
+    prefix = ""
+    payload = line
+    external_timestamp: str | None = None
+    prefix_match = re.match(r"^(\[[^\]]+\])\s+(.*)$", line)
+    if prefix_match:
+        prefix, payload = prefix_match.groups()
+    timestamp_match = re.match(r"^(\d{4}-\d{2}-\d{2}T\S+)\s+(\{.*\})$", payload)
+    if timestamp_match:
+        external_timestamp, payload = timestamp_match.groups()
     try:
-        data = json.loads(line)
+        data = json.loads(payload)
     except json.JSONDecodeError:
         return ParsedLogLine(
             raw=line,
@@ -53,6 +63,8 @@ def parse_log_line(line: str) -> ParsedLogLine:
         )
 
     timestamp = _extract_first_string(data, "timestamp", "time", "ts", "@timestamp")
+    if timestamp is None:
+        timestamp = external_timestamp
     level = _extract_first_string(data, "level", "severity", "lvl")
     message = _extract_first_string(data, "message", "msg")
     category = _extract_first_string(data, "category", "logger", "component", "module")
@@ -84,6 +96,7 @@ def parse_log_line(line: str) -> ParsedLogLine:
         message=message,
         category=category,
         fields=fields,
+        prefix=prefix,
     )
 
 
@@ -123,11 +136,16 @@ def _structured_line(parsed: ParsedLogLine) -> str:
         parts.append(parsed.message)
     field_parts = [f"{key}={_stringify(value)}" for key, value in parsed.fields.items()]
     parts.extend(field_parts)
+    if parsed.prefix:
+        parts.insert(0, parsed.prefix)
     return " ".join(part for part in parts if part)
 
 
 def _structured_text(parsed: ParsedLogLine) -> Text:
     text = Text()
+    if parsed.prefix:
+        text.append(parsed.prefix, style="dim")
+        text.append(" ")
     if parsed.timestamp:
         text.append(_short_timestamp(parsed.timestamp), style="dim")
         text.append(" ")
