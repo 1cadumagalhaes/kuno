@@ -1976,7 +1976,7 @@ class KunoApp(App[None]):
             self._last_table_view = self.current_view
             self._pending_actions.clear()
 
-        rows = self._current_rows()
+        rows = cast(list[Any], self._current_rows())
         removed_key = self._table_sync.sync(
             rows,
             key_fn=self._key_fn(),
@@ -3053,7 +3053,7 @@ class KunoApp(App[None]):
 
     def _apply_sort(self) -> None:
         """Sort the current data in place and refresh the table."""
-        rows = self._current_rows()
+        rows = cast(list[Any], self._current_rows())
         if not rows or self._sort_column is None:
             return
         col = self._sort_column
