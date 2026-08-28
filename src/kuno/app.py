@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from collections.abc import Iterable
@@ -461,11 +462,10 @@ class LogsScreen(Screen[None]):
         self._set_log_lines(logs.splitlines() if logs else [])
 
     async def _load_all_pod_logs(self) -> None:
-        output = self.query_one("#logs-output", LogView)
         if not isinstance(self.logs_source, WorkloadSource):
             return
-        merged: list[str] = []
-        for pod_name in self.logs_source.pod_names:
+
+        async def load_pod_logs(pod_name: str) -> list[str]:
             try:
                 async with KubeClient(context=self.context) as kube_client:
                     logs = await read_pod_logs(
@@ -477,9 +477,13 @@ class LogsScreen(Screen[None]):
                         timestamps=self.timestamps_enabled,
                     )
             except Exception as error:
-                output.append(f"[{pod_name}] error: {error}")
-                continue
-            merged.extend(f"[{pod_name}] {line}" for line in logs.splitlines())
+                return [f"[{pod_name}] error: {error}"]
+            return [f"[{pod_name}] {line}" for line in logs.splitlines()]
+
+        results = await asyncio.gather(
+            *(load_pod_logs(pod_name) for pod_name in self.logs_source.pod_names)
+        )
+        merged = [line for pod_lines in results for line in pod_lines]
         self._set_log_lines(merged)
 
     def on_input_changed(self, event: Input.Changed) -> None:

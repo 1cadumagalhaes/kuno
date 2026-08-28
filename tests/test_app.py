@@ -6,6 +6,7 @@ from textual.widgets import Button, DataTable, Input, Static
 from kuno.app import AboutScreen, KunoApp, LogsScreen
 from kuno.k8s.config import UnknownContextError
 from kuno.log_view import LogView
+from kuno.logs import LogMode
 from kuno.models import (
     ContainerSummary,
     ContextSummary,
@@ -1926,6 +1927,74 @@ async def test_app_switches_to_deployments_view(monkeypatch) -> None:
         assert pod_panel.border_title == "Deployments"
         assert info_panel.border_title == "Deployment Info"
         assert pod_table.row_count == 1
+
+
+@pytest.mark.asyncio
+async def test_deployment_selection_opens_workload_logs(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_pods(kube_client: FakeKubeClient, namespace: str) -> list[PodSummary]:
+        return []
+
+    async def fake_list_deployments(
+        kube_client: FakeKubeClient, namespace: str
+    ) -> list[DeploymentSummary]:
+        return [
+            DeploymentSummary(
+                name="api",
+                ready="1/1",
+                up_to_date=1,
+                available=1,
+                age="1h",
+                containers="api",
+                cpu="100m",
+                memory="128Mi",
+            )
+        ]
+
+    async def fake_list_pods_for_workload(
+        kube_client: FakeKubeClient, namespace: str, kind: str, name: str
+    ) -> list[str]:
+        assert (namespace, kind, name) == ("payments", "deployment", "api")
+        return ["api-1"]
+
+    async def fake_read_pod_logs(*args, **kwargs) -> str:
+        return "ready"
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_pods", fake_list_pods)
+    monkeypatch.setattr("kuno.app.list_deployments", fake_list_deployments)
+    monkeypatch.setattr("kuno.app.list_pods_for_workload", fake_list_pods_for_workload)
+    monkeypatch.setattr("kuno.app.read_pod_logs", fake_read_pod_logs)
+
+    app = KunoApp(StartupConfig(context="prod", namespace="payments"), show_splash=False)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app.execute_command("deploy")
+        await pilot.pause()
+        await pilot.press("L")
+        await pilot.pause()
+        await pilot.pause()
+        assert isinstance(app.screen, LogsScreen)
+        assert app.screen.logs_source.kind == "deployment"
+        assert app.screen.logs_source.name == "api"
+        assert app.screen.mode is LogMode.RAW
+        await pilot.press("m")
+        await pilot.pause()
+        assert app.screen.mode is LogMode.STRUCTURED
 
 
 @pytest.mark.asyncio
