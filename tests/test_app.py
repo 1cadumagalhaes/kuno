@@ -71,10 +71,9 @@ async def test_app_starts_in_pods_view(monkeypatch) -> None:
     async with app.run_test() as pilot:
         await pilot.pause()
         pod_panel = app.query_one("#pod-panel", Vertical)
-        pod_table = app.query_one("#pod-table", DataTable)
         assert app.current_view is ExplorerView.PODS
         assert pod_panel.border_title == "Pods"
-        assert pod_table.row_count == 1
+        assert app.query_one("#pod-table", DataTable).row_count == 1
 
 
 @pytest.mark.asyncio
@@ -238,7 +237,6 @@ async def test_app_selecting_namespace_opens_pods(monkeypatch) -> None:
         await pilot.press("enter")
         await pilot.pause()
         pod_panel = app.query_one("#pod-panel", Vertical)
-        pod_table = app.query_one("#pod-table", DataTable)
         assert app.current_view is ExplorerView.PODS
         assert pod_panel.border_title == "Pods"
 

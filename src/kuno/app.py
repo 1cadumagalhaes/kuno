@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import re
-from importlib.metadata import PackageNotFoundError, version as package_version
 import time
 from collections.abc import Iterable
 from contextlib import suppress
 from datetime import datetime
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as package_version
 from pathlib import Path
 from typing import Any, ClassVar, cast
 
@@ -234,7 +235,9 @@ class ShortcutScreen(ModalScreen[None]):
 
 
 class ExplorerTable(DataTable):
-    BINDINGS = [Binding("ctrl+l", "open_deployment_logs", "", show=False, priority=True)]
+    BINDINGS: ClassVar[list[Binding]] = [
+        Binding("ctrl+l", "open_deployment_logs", "", show=False, priority=True)
+    ]
 
     def on_key(self, event: events.Key) -> None:
         if event.key.lower() == "ctrl+l" or event.character == "\x0c":
@@ -1754,11 +1757,6 @@ class KunoApp(App[None]):
         self.refresh_current_view()
         self.set_interval(2, self.refresh_current_view)
         self._dblog("on_mount done")
-
-    def on_key(self, event: events.Key) -> None:
-        if event.key.lower() == "ctrl+l" and isinstance(self.screen, Screen):
-            event.stop()
-            self.action_open_deployment_logs()
 
     async def on_unmount(self) -> None:
         await self._close_clients()
