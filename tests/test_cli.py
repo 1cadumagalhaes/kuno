@@ -47,4 +47,4 @@ def test_version_flag(capsys: pytest.CaptureFixture[str], flag: str) -> None:
         build_parser().parse_args([flag])
 
     assert error.value.code == 0
-    assert capsys.readouterr().out == "kuno 0.2.0\n"
+    assert capsys.readouterr().out == "kuno 0.2.1\n"

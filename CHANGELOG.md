@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.1] - 2026-08-28
+
+### Fixes
+
+- Added `kuno --version` and `kuno -v` CLI flags.
+- Fixed release type-checking failures in table sorting.
+- Refreshed release validation and packaging metadata.
+
+### Verification
+
+- Ruff, ty, and full test suite pass: `193 passed`.
+
 ## [0.2.0] - 2026-08-28
 
 ### Highlights
