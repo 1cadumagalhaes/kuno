@@ -10,6 +10,7 @@ from kuno.k8s.client import KubeClient
 class FakeApiClient:
     def __init__(self) -> None:
         self.closed = False
+        self.call_api = lambda *args, **kwargs: None
 
     async def close(self) -> None:
         self.closed = True

@@ -1798,7 +1798,7 @@ class KunoApp(App[None]):
         config = self.resolved_startup_config
         context = config.context if config is not None else None
         client = self._clients.get(context) if context is not None else None
-        if client is not None and client.api_client is not None:
+        if client is not None and getattr(client, "api_client", None) is not None:
             self._dblog("invalidating stale kube client")
             await client.invalidate()
 
@@ -1940,6 +1940,7 @@ class KunoApp(App[None]):
             self.statefulsets = []
             await self._render_pod_table()
             pod_info.update(f"{self._view_singular()}\n(error: {error})")
+            await self._invalidate_client_for_active_context()
             return
 
         self._apply_sort()
