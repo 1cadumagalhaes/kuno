@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import suppress
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -45,6 +46,24 @@ class KubeClient:
         self.core_v1 = CoreV1Api(api_client)
         self.apps_v1 = AppsV1Api(api_client)
         self.custom_objects = CustomObjectsApi(api_client)
+
+    async def invalidate(self) -> None:
+        """Tear down the client after a failure.
+
+        When a pooled connection goes stale (server idle timeout, network
+        change), the aiohttp session inside the ApiClient is dead but
+        ``connect()`` would happily return the cached instance forever.
+        Resetting the handle forces the next ``connect()`` to build a fresh
+        connection from the kubeconfig.
+        """
+        api_client = self.api_client
+        self.api_client = None
+        self.core_v1 = None
+        self.apps_v1 = None
+        self.custom_objects = None
+        if api_client is not None:
+            with suppress(Exception):
+                await api_client.close()
 
     async def close(self) -> None:
         if self._reuse:
