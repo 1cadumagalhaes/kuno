@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.2] - 2026-09-01
+
+### Fixes
+
+- Recovered pooled kube clients after stale connections (idle timeout, network switch) instead of failing forever until restart.
+- Bounded Kubernetes API requests with a 60s total timeout so a dead network can no longer wedge the polling loop.
+
+### Verification
+
+- Ruff and full test suite pass: `193 passed`.
+
 ## [0.2.1] - 2026-08-28
 
 ### Fixes
