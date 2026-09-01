@@ -1781,11 +1781,26 @@ class KunoApp(App[None]):
             await self._do_refresh_current_view()
         except Exception as error:
             self._dblog(f"refresh_current_view ERROR: {error}")
+            await self._invalidate_client_for_active_context()
             self.notify(
                 f"Error loading {self.current_view.value}: {error}",
                 severity="error",
                 timeout=10,
             )
+
+    async def _invalidate_client_for_active_context(self) -> None:
+        """Drop a pooled client after a failure so the next refresh rebuilds it.
+
+        A pooled aiohttp session can go stale (idle timeout, network switch);
+        without this the 2s polling loop would keep retrying against a dead
+        connection forever.
+        """
+        config = self.resolved_startup_config
+        context = config.context if config is not None else None
+        client = self._clients.get(context) if context is not None else None
+        if client is not None and getattr(client, "api_client", None) is not None:
+            self._dblog("invalidating stale kube client")
+            await client.invalidate()
 
     async def _do_refresh_current_view(self) -> None:
         pod_info = self.query_one("#pod-info", Static)
@@ -1925,6 +1940,7 @@ class KunoApp(App[None]):
             self.statefulsets = []
             await self._render_pod_table()
             pod_info.update(f"{self._view_singular()}\n(error: {error})")
+            await self._invalidate_client_for_active_context()
             return
 
         self._apply_sort()

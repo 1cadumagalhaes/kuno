@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+from contextlib import suppress
 from typing import TYPE_CHECKING
+
+DEFAULT_REQUEST_TIMEOUT = 60.0
 
 if TYPE_CHECKING:
     from kubernetes_asyncio.client import ApiClient, AppsV1Api, CoreV1Api, CustomObjectsApi
@@ -10,6 +14,24 @@ def _new_client_from_config(*, config_file: str | None, context: str):
     from kubernetes_asyncio.config import new_client_from_config
 
     return new_client_from_config(config_file=config_file, context=context)
+
+
+def _apply_call_timeout(api_client, timeout: float) -> None:
+    """Wrap ``call_api`` with a total timeout.
+
+    kubernetes_asyncio passes ``_request_timeout=None`` by default, which
+    maps to an aiohttp request with no timeout at all. Over a dead
+    connection (VPN drop, network switch) a request can hang until TCP
+    gives up, wedging the polling loop forever. A total timeout keeps any
+    request — including log-stream requests, which return as soon as the
+    response headers arrive — bounded.
+    """
+    original = api_client.call_api
+
+    async def call_with_timeout(*args, **kwargs):
+        return await asyncio.wait_for(original(*args, **kwargs), timeout=timeout)
+
+    api_client.call_api = call_with_timeout  # type: ignore[assignment]
 
 
 class KubeClient:
@@ -42,9 +64,28 @@ class KubeClient:
             context=self.context,
         )
         self.api_client = api_client
+        _apply_call_timeout(api_client, DEFAULT_REQUEST_TIMEOUT)
         self.core_v1 = CoreV1Api(api_client)
         self.apps_v1 = AppsV1Api(api_client)
         self.custom_objects = CustomObjectsApi(api_client)
+
+    async def invalidate(self) -> None:
+        """Tear down the client after a failure.
+
+        When a pooled connection goes stale (server idle timeout, network
+        change), the aiohttp session inside the ApiClient is dead but
+        ``connect()`` would happily return the cached instance forever.
+        Resetting the handle forces the next ``connect()`` to build a fresh
+        connection from the kubeconfig.
+        """
+        api_client = self.api_client
+        self.api_client = None
+        self.core_v1 = None
+        self.apps_v1 = None
+        self.custom_objects = None
+        if api_client is not None:
+            with suppress(Exception):
+                await api_client.close()
 
     async def close(self) -> None:
         if self._reuse:
