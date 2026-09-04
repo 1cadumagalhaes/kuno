@@ -39,6 +39,7 @@ from kuno.k8s.resources import (
     get_pod_workload,
     get_resource_events,
     get_resource_yaml,
+    is_namespace_hidden,
     list_deployments,
     list_namespace_events,
     list_namespace_summaries,
@@ -132,7 +133,7 @@ class ShortcutScreen(ModalScreen[None]):
     def _current_view_help(self) -> str:
         return {
             ExplorerView.CONTEXTS: "[bold]Enter[/bold]      Switch to the highlighted context\n[bold]C[/bold]          Reopen contexts",
-            ExplorerView.NAMESPACES: "[bold]Enter[/bold]      Switch to the highlighted namespace\n[bold]N[/bold]          Reopen namespaces",
+            ExplorerView.NAMESPACES: "[bold]Enter[/bold]      Switch to the highlighted namespace\n[bold]N[/bold]          Reopen namespaces\n[bold]h[/bold]          Show/hide hidden namespaces",
             ExplorerView.PODS: "[bold]Enter[/bold]      Open containers\n[bold]L / l[/bold]      Open pod logs\n[bold]Ctrl+X[/bold]    Clear pods by status",
             ExplorerView.CONTAINERS: "[bold]Enter[/bold]      Open container logs\n[bold]L / l[/bold]      Open logs\n[bold]d[/bold]          Describe container",
             ExplorerView.DEPLOYMENTS: "[bold]Enter[/bold]      Open deployment details\n[bold]L / l[/bold]      Open workload logs\n[bold]d[/bold]          Describe deployment",
@@ -1628,6 +1629,8 @@ class KunoApp(App[None]):
         ("r", "refresh_pods", "Refresh"),
         Binding("y", "yaml_selected", "YAML", show=False),
         Binding("ctrl+o", "cycle_sort", "Sort", show=False),
+        Binding("tab", "command_tab", "Complete", show=False, priority=True),
+        Binding("h", "toggle_hidden_namespaces", "Show Hidden", show=False),
         Binding("question_mark", "show_shortcuts", "Shortcuts"),
     ]
 
@@ -1682,6 +1685,8 @@ class KunoApp(App[None]):
         # Sort state
         self._sort_column: str | None = None
         self._sort_reverse: bool = False
+        # Session-only toggle to reveal hidden namespaces
+        self._show_hidden_namespaces = False
         # key -> item index for O(1) row lookups
         self._row_index: dict[str, Any] = {}
         # last row key rendered in the info panel, to skip redundant re-renders
@@ -1872,8 +1877,15 @@ class KunoApp(App[None]):
                     self.container_pod_name = None
                     self.containers = []
                     self.contexts = []
+                    hidden_patterns = (
+                        []
+                        if self._show_hidden_namespaces
+                        else self._hidden_namespace_patterns(context)
+                    )
                     self.namespaces = await list_namespace_summaries(
-                        kube_client, current_namespace=namespace
+                        kube_client,
+                        current_namespace=namespace,
+                        hidden_patterns=hidden_patterns,
                     )
                     self.pods = []
                     self.deployments = []
@@ -1926,7 +1938,8 @@ class KunoApp(App[None]):
                     self.secrets = []
                     self.services = []
                 with suppress(Exception):
-                    self.available_namespaces = await self._cached_namespaces(kube_client, context)
+                    await self._cached_namespaces(kube_client, context)
+                    self.available_namespaces = self._visible_namespaces(context)
         except Exception as error:
             self.container_pod_name = None
             self.containers = []
@@ -2129,6 +2142,20 @@ class KunoApp(App[None]):
             return _pod_name
         if view is ExplorerView.CONTAINERS:
             return lambda c: truncate_for_table(c.name)
+        if view is ExplorerView.NAMESPACES:
+            patterns = self._hidden_namespace_patterns(
+                self.resolved_startup_config.context
+                if self.resolved_startup_config is not None
+                else None
+            )
+
+            def _ns_name(n):
+                name = truncate_for_table(n.name)
+                if patterns and is_namespace_hidden(n.name, patterns):
+                    return Text(f"{name} (hidden)", style="dim")
+                return name
+
+            return _ns_name
         return lambda r: truncate_for_table(r.name)
 
     def _key_fn(self):
@@ -2204,15 +2231,25 @@ class KunoApp(App[None]):
         if self.focused is not command_input:
             return
 
-        if event.key == "tab":
-            self._accept_command_suggestion()
-            event.stop()
-        elif event.key == "down":
+        if event.key == "down":
             self._move_command_suggestion(1)
             event.stop()
         elif event.key == "up":
             self._move_command_suggestion(-1)
             event.stop()
+
+    def action_command_tab(self) -> None:
+        """Complete the current suggestion; Tab normally moves focus."""
+        if not self.command_bar_visible:
+            screen = self.screen
+            screen.focus_next()
+            return
+        command_input = self.query_one("#command-input", Input)
+        if self.focused is not command_input:
+            screen = self.screen
+            screen.focus_next()
+            return
+        self._accept_command_suggestion()
 
     def get_system_commands(self, screen) -> Iterable[SystemCommand]:
         yield SystemCommand("About", "Show information about kuno", self._command_about)
@@ -3171,6 +3208,9 @@ class KunoApp(App[None]):
             client = self._client(context)
             async with client:
                 namespaces = await self._cached_namespaces(client, context)
+            patterns = self._hidden_namespace_patterns(context)
+            if patterns and not self._show_hidden_namespaces:
+                namespaces = [n for n in namespaces if not is_namespace_hidden(n, patterns)]
             if remembered not in namespaces:
                 remembered = None
 
@@ -3202,8 +3242,26 @@ class KunoApp(App[None]):
             self._clients[context] = client
         return client
 
+    def _hidden_namespace_patterns(self, context: str | None) -> list[str]:
+        """Resolve hidden-namespace patterns for *context*.
+
+        Per-context overrides replace the global list; no override means
+        the global list applies.
+        """
+        if context is not None and context in self.kuno_config.hidden_namespaces_by_context:
+            return self.kuno_config.hidden_namespaces_by_context[context]
+        return self.kuno_config.hidden_namespaces
+
+    def action_toggle_hidden_namespaces(self) -> None:
+        if self.current_view is not ExplorerView.NAMESPACES:
+            return
+        self._show_hidden_namespaces = not self._show_hidden_namespaces
+        state = "shown" if self._show_hidden_namespaces else "hidden"
+        self.notify(f"Hidden namespaces {state}", timeout=4)
+        self.refresh_current_view()
+
     async def _cached_namespaces(self, kube_client: Any, context: str) -> list[str]:
-        """List namespaces, caching the result per context for a short TTL."""
+        """List namespaces, caching the raw result per context for a short TTL."""
         now = time.monotonic()
         cached_ts = self._namespace_cache_ts.get(context, 0.0)
         cached = self._namespace_cache.get(context)
@@ -3216,6 +3274,20 @@ class KunoApp(App[None]):
         self._namespace_cache[context] = namespaces
         self._namespace_cache_ts[context] = now
         return namespaces
+
+    def _visible_namespaces(self, context: str) -> list[str]:
+        """Raw cached namespaces filtered by hidden patterns for *context*."""
+        patterns = self._hidden_namespace_patterns(context)
+        if not patterns or self._show_hidden_namespaces:
+            return self._namespace_cache.get(context, [])
+        current = None
+        if self.resolved_startup_config is not None:
+            current = self.resolved_startup_config.namespace
+        return [
+            name
+            for name in self._namespace_cache.get(context, [])
+            if name == current or not is_namespace_hidden(name, patterns)
+        ]
 
     def _selected_item(self) -> Any | None:
         pod_table = self.query_one("#pod-table", DataTable)
