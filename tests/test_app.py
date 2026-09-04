@@ -4,6 +4,7 @@ from textual.containers import Vertical, VerticalScroll
 from textual.widgets import Button, DataTable, Input, Static
 
 from kuno.app import AboutScreen, KunoApp, LogsScreen
+from kuno.config import DEFAULT_CONFIG_PATH, KunoConfig
 from kuno.k8s.config import UnknownContextError
 from kuno.log_view import LogView
 from kuno.logs import LogMode
@@ -149,7 +150,7 @@ async def test_app_selecting_context_opens_namespaces(monkeypatch) -> None:
         return ["payments"]
 
     async def fake_list_namespace_summaries(
-        kube_client: FakeKubeClient, *, current_namespace: str | None
+        kube_client: FakeKubeClient, *, current_namespace: str | None, hidden_patterns=None
     ) -> list[NamespaceSummary]:
         assert current_namespace == "payments"
         return [NamespaceSummary(name="payments", status="Active", age="1h", current="*")]
@@ -203,7 +204,7 @@ async def test_app_selecting_namespace_opens_pods(monkeypatch) -> None:
         return ["payments"]
 
     async def fake_list_namespace_summaries(
-        kube_client: FakeKubeClient, *, current_namespace: str | None
+        kube_client: FakeKubeClient, *, current_namespace: str | None, hidden_patterns=None
     ) -> list[NamespaceSummary]:
         return [NamespaceSummary(name="payments", status="Active", age="1h", current="*")]
 
@@ -480,7 +481,7 @@ async def test_app_can_go_back_from_pods_to_namespaces(monkeypatch) -> None:
         return ["payments"]
 
     async def fake_list_namespace_summaries(
-        kube_client: FakeKubeClient, *, current_namespace: str | None
+        kube_client: FakeKubeClient, *, current_namespace: str | None, hidden_patterns=None
     ) -> list[NamespaceSummary]:
         return [NamespaceSummary(name="payments", status="Active", age="1h", current="*")]
 
@@ -1772,6 +1773,7 @@ async def test_app_accepts_command_suggestion(monkeypatch) -> None:
         await pilot.press("tab")
         await pilot.pause()
         assert command_input.value == "refresh"
+        assert app.focused is command_input
 
 
 @pytest.mark.asyncio
@@ -3012,3 +3014,66 @@ async def test_clear_failed_command_opens_confirmation(monkeypatch) -> None:
         assert str(confirm_title.content) == "Clear pods"
         confirm_message = app.screen.query_one("#confirm-message", Static)
         assert "2 failed pods" in str(confirm_message.content)
+
+
+@pytest.mark.asyncio
+async def test_app_filters_hidden_namespaces_in_view(monkeypatch) -> None:
+    def fake_load_startup_targets(startup_config: StartupConfig) -> StartupConfig:
+        return startup_config
+
+    monkeypatch.setattr("kuno.app.load_startup_targets", fake_load_startup_targets)
+
+    class FakeKubeClient:
+        def __init__(self, context: str) -> None:
+            self.context = context
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_list_namespace_summaries(
+        kube_client: FakeKubeClient, *, current_namespace: str | None, hidden_patterns=None
+    ) -> list[NamespaceSummary]:
+        names = ["gke-managed-1", "kube-system", "payments"]
+        patterns = hidden_patterns or []
+        visible = [
+            NamespaceSummary(
+                name=n,
+                status="Active",
+                age="1h",
+                current="*" if n == current_namespace else "",
+            )
+            for n in names
+            if n == current_namespace
+            or not any(__import__("fnmatch").fnmatchcase(n, p) for p in patterns)
+        ]
+        return visible
+
+    monkeypatch.setattr("kuno.app.KubeClient", FakeKubeClient)
+    monkeypatch.setattr("kuno.app.list_namespace_summaries", fake_list_namespace_summaries)
+
+    config = KunoConfig(path=DEFAULT_CONFIG_PATH, hidden_namespaces=["gke-*", "kube-*"])
+    app = KunoApp(
+        StartupConfig(context="prod", namespace="payments"),
+        kuno_config=config,
+        show_splash=False,
+    )
+    app.current_view = ExplorerView.NAMESPACES
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert [ns.name for ns in app.namespaces] == ["payments"]
+
+        await pilot.press("h")
+        await pilot.pause()
+        assert [ns.name for ns in app.namespaces] == [
+            "gke-managed-1",
+            "kube-system",
+            "payments",
+        ]
+
+        await pilot.press("h")
+        await pilot.pause()
+        assert [ns.name for ns in app.namespaces] == ["payments"]

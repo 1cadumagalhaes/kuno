@@ -10,6 +10,7 @@ from kuno.k8s.resources import (
     format_age,
     format_cpu_requests,
     format_memory_requests,
+    is_namespace_hidden,
     list_deployments,
     list_namespace_summaries,
     list_namespaces,
@@ -521,6 +522,70 @@ async def test_list_namespaces_maps_api_items() -> None:
     kube_client = SimpleNamespace(core_v1=FakeCoreV1())
 
     assert await list_namespaces(kube_client) == ["airflow", "billing"]
+
+
+@pytest.mark.asyncio
+async def test_is_namespace_hidden_matches_globs() -> None:
+    assert is_namespace_hidden("gke-managed-ns", ["gke-*", "kube-*"])
+    assert is_namespace_hidden("kube-system", ["kube-*"])
+    assert is_namespace_hidden("kube-system", ["kube-system"])
+    assert not is_namespace_hidden("payments", ["gke-*", "kube-*"])
+    assert not is_namespace_hidden("gke-managed", [])
+    assert not is_namespace_hidden("gke-managed", [""])
+
+
+@pytest.mark.asyncio
+async def test_list_namespaces_filters_hidden_patterns() -> None:
+    items = [
+        SimpleNamespace(metadata=SimpleNamespace(name="gke-managed-1")),
+        SimpleNamespace(metadata=SimpleNamespace(name="kube-system")),
+        SimpleNamespace(metadata=SimpleNamespace(name="payments")),
+    ]
+
+    class FakeCoreV1:
+        async def list_namespace(self) -> SimpleNamespace:
+            return SimpleNamespace(items=items)
+
+    kube_client = SimpleNamespace(core_v1=FakeCoreV1())
+
+    assert await list_namespaces(kube_client, hidden_patterns=["gke-*", "kube-*"]) == ["payments"]
+    assert await list_namespaces(
+        kube_client, hidden_patterns=["gke-*", "kube-*"], protected="kube-system"
+    ) == [
+        "kube-system",
+        "payments",
+    ]
+    assert await list_namespaces(kube_client) == [
+        "gke-managed-1",
+        "kube-system",
+        "payments",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_namespace_summaries_filters_hidden_patterns() -> None:
+    def _item(name: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            metadata=SimpleNamespace(name=name), status=SimpleNamespace(phase="Active")
+        )
+
+    items = [_item("gke-managed-1"), _item("kube-system"), _item("payments")]
+
+    class FakeCoreV1:
+        async def list_namespace(self) -> SimpleNamespace:
+            return SimpleNamespace(items=items)
+
+    kube_client = SimpleNamespace(core_v1=FakeCoreV1())
+
+    summaries = await list_namespace_summaries(
+        kube_client, current_namespace="payments", hidden_patterns=["gke-*", "kube-*"]
+    )
+    assert [s.name for s in summaries] == ["payments"]
+
+    revealed = await list_namespace_summaries(
+        kube_client, current_namespace=None, hidden_patterns=[]
+    )
+    assert [s.name for s in revealed] == ["gke-managed-1", "kube-system", "payments"]
 
 
 def test_deployment_summary_from_api_item_reads_operational_fields() -> None:
