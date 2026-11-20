@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from decimal import Decimal
+from fnmatch import fnmatchcase
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from kuno.models import (
@@ -184,7 +185,20 @@ def parse_since_duration(value: str) -> int | None:
     return int(amount) * multipliers[unit]
 
 
-async def list_namespaces(kube_client: HasCoreV1) -> list[str]:
+def is_namespace_hidden(name: str, patterns: list[str]) -> bool:
+    """Return whether *name* matches any hidden-namespace glob pattern."""
+    return any(fnmatchcase(name, pattern) for pattern in patterns if pattern)
+
+
+async def list_namespaces(
+    kube_client: HasCoreV1,
+    hidden_patterns: list[str] | None = None,
+    protected: str | None = None,
+) -> list[str]:
+    """List namespaces, optionally excluding hidden patterns.
+
+    *protected* (the current namespace) is never filtered out.
+    """
     if kube_client.core_v1 is None:
         raise RuntimeError("Kubernetes client is not connected")
 
@@ -193,23 +207,41 @@ async def list_namespaces(kube_client: HasCoreV1) -> list[str]:
     for item in namespace_list.items:
         metadata = getattr(item, "metadata", None)
         name = getattr(metadata, "name", None)
-        if isinstance(name, str) and name:
-            names.append(name)
+        if not (isinstance(name, str) and name):
+            continue
+        if name != protected and hidden_patterns and is_namespace_hidden(name, hidden_patterns):
+            continue
+        names.append(name)
     return sorted(names)
 
 
 async def list_namespace_summaries(
-    kube_client: HasCoreV1, *, current_namespace: str | None
+    kube_client: HasCoreV1,
+    *,
+    current_namespace: str | None,
+    hidden_patterns: list[str] | None = None,
 ) -> list[NamespaceSummary]:
     if kube_client.core_v1 is None:
         raise RuntimeError("Kubernetes client is not connected")
 
     namespace_list = await kube_client.core_v1.list_namespace()
     current = datetime.now(UTC)
-    return [
-        namespace_summary_from_api_item(item, now=current, current_namespace=current_namespace)
-        for item in namespace_list.items
-    ]
+    summaries = []
+    for item in namespace_list.items:
+        metadata = getattr(item, "metadata", None)
+        name = getattr(metadata, "name", None)
+        if not isinstance(name, str):
+            continue
+        if (
+            name != current_namespace
+            and hidden_patterns
+            and is_namespace_hidden(name, hidden_patterns)
+        ):
+            continue
+        summaries.append(
+            namespace_summary_from_api_item(item, now=current, current_namespace=current_namespace)
+        )
+    return summaries
 
 
 async def list_services(kube_client: HasCoreV1, namespace: str) -> list[ServiceSummary]:
