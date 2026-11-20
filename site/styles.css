@@ -57,6 +57,21 @@ button:focus-visible, a:focus-visible, input:focus-visible, [tabindex="0"]:focus
 .site-header nav a { font-size: 15px; text-decoration: none; color: var(--muted); }
 .site-header nav a:hover, .site-footer a:hover { color: var(--blue); }
 .site-header nav .nav-github { color: var(--ink); font-weight: 650; }
+.site-header nav .nav-star {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 13px;
+  border: 1px solid var(--blue);
+  border-radius: 6px;
+  color: var(--blue-dark);
+  font-size: 14px;
+  font-weight: 650;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+.site-header nav .nav-star:hover { background: rgb(36 88 211 / 0.09); }
+.nav-star svg { width: 16px; height: 16px; display: block; fill: var(--blue); }
 .nav-github {
   min-height: 38px;
   display: inline-flex;
@@ -315,6 +330,8 @@ kbd { display: inline-block; min-width: 1.5em; padding: 0.1em 0.34em; border: 1p
   .site-header .nav-section { display: none; }
   .nav-github { min-height: 34px; gap: 0; padding: 0 9px; }
   .nav-github span { display: none; }
+  .site-header nav .nav-star { min-height: 34px; gap: 0; padding: 0 9px; }
+  .nav-star span { display: none; }
   .lang-switch { min-height: 34px; padding: 0 4px; }
   .brand { font-size: 17px; gap: 7px; }
   .brand img { width: 30px; height: 30px; }
