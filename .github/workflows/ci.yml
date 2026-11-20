@@ -22,3 +22,7 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ty check
       - run: uv run pytest
+
+      # The social cards are committed; this fails when a page copy or the
+      # screenshot changed without regenerating them.
+      - run: uv run --with cairosvg --with pillow python scripts/build_og_cards.py --check

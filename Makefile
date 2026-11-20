@@ -1,5 +1,5 @@
 
-.PHONY: format format-check lint lint-check lint-unsafe typecheck test run pre-commit check
+.PHONY: format format-check lint lint-check lint-unsafe typecheck test run pre-commit check og og-check
 
 ARGS :=
 
@@ -46,3 +46,9 @@ check:
 	uv run ruff check .
 	uv run ty check
 	uv run pytest
+
+og:
+	uv run --with cairosvg --with pillow python scripts/build_og_cards.py
+
+og-check:
+	uv run --with cairosvg --with pillow python scripts/build_og_cards.py --check
