@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex">
+    <title>OG card preview (dev only)</title>
+    <style>
+      :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+      body { margin: 0; padding: 22px; background: var(--background, #f4f5f8); color: var(--foreground, #111827); }
+      .hint { max-width: 700px; margin: 0 auto 20px; color: var(--muted-foreground, #55607a); font-size: 13px; line-height: 1.6; }
+      .cards { display: grid; gap: 22px; max-width: 700px; margin-inline: auto; }
+      .card { overflow: hidden; border: 1px solid var(--border, #d7deea); border-radius: var(--radius, 10px); background: var(--card, #ffffff); }
+      .card img { display: block; width: 100%; height: auto; border-bottom: 1px solid var(--border, #d7deea); }
+      .card-body { padding: 14px 16px 16px; }
+      .card-url { margin: 0 0 6px; color: var(--muted-foreground, #55607a); font-size: 12px; letter-spacing: 0.02em; text-transform: lowercase; }
+      .card-title { margin: 0 0 6px; font-size: 17px; font-weight: 650; line-height: 1.3; }
+      .card-desc { margin: 0; color: var(--muted-foreground, #55607a); font-size: 14px; line-height: 1.5; }
+      .tag { display: inline-block; margin-bottom: 18px; padding: 3px 9px; border: 1px solid var(--border, #d7deea); border-radius: 999px; color: var(--muted-foreground, #55607a); font-size: 11px; letter-spacing: 0.06em; }
+    </style>
+  </head>
+  <body>
+    <div class="cards">
+      <div>
+        <span class="tag">pt-BR</span>
+        <article class="card">
+          <img src="/home/cadu/Projects/kuno/site/assets/og-pt.png" alt="Cartão social do Kuno em português" width="1200" height="630">
+          <div class="card-body">
+            <p class="card-url">cadumagalhaes.dev › kuno</p>
+            <p class="card-title">Kuno: Kubernetes a uma tecla de distância</p>
+            <p class="card-desc">Kuno é uma interface de terminal para Kubernetes feita para o teclado: encontre recursos, acompanhe logs e inspecione manifestos e eventos.</p>
+          </div>
+        </article>
+      </div>
+
+      <div>
+        <span class="tag">en</span>
+        <article class="card">
+          <img src="/home/cadu/Projects/kuno/site/assets/og-en.png" alt="Kuno social card in English" width="1200" height="630">
+          <div class="card-body">
+            <p class="card-url">cadumagalhaes.dev › kuno › en</p>
+            <p class="card-title">Kuno: Kubernetes, one keystroke away</p>
+            <p class="card-desc">Kuno is a keyboard-first Kubernetes terminal UI for exploring resources, logs, manifests, and events.</p>
+          </div>
+        </article>
+      </div>
+    </div>
+    <p class="hint">Preview local dos cards sociais, um por idioma. Os valores vêm das meta tags de <code>site/index.html</code> e <code>site/en/index.html</code>; as imagens são geradas por <code>scripts/build_og_cards.py</code>. Este arquivo não é publicado.</p>
+  </body>
+</html>
