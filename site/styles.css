@@ -300,6 +300,7 @@ kbd { display: inline-block; min-width: 1.5em; padding: 0.1em 0.34em; border: 1p
   .demo-main { padding-inline: 14px; }
   .demo-info { padding-inline: 14px; }
   .screen-row { grid-template-columns: 1fr; gap: 22px; }
+  .theme-row { grid-template-columns: 1fr; gap: 26px; }
   .screen-row-reverse .screen-copy, .screen-row-reverse .screen-shot { order: initial; }
   .screen-pair { grid-template-columns: 1fr; }
   .screen-pair .screen-shot img { height: auto; object-fit: contain; }
@@ -311,6 +312,7 @@ kbd { display: inline-block; min-width: 1.5em; padding: 0.1em 0.34em; border: 1p
   .site-header { min-height: 64px; }
   .site-header nav { gap: 10px; }
   .site-header nav a { font-size: 13px; }
+  .site-header .nav-section { display: none; }
   .nav-github { min-height: 34px; gap: 0; padding: 0 9px; }
   .nav-github span { display: none; }
   .lang-switch { min-height: 34px; padding: 0 4px; }
@@ -350,6 +352,9 @@ kbd { display: inline-block; min-width: 1.5em; padding: 0.1em 0.34em; border: 1p
   .demo-hint kbd { min-width: 1.3em; padding-inline: 3px; font-size: 11px; }
   .demo-caption { text-align: left; line-height: 1.6; }
   .workflow { padding-block: 42px 86px; }
+  .themes-section { padding-block: 42px 70px; }
+  .theme-row { display: flex; flex-direction: column; align-items: stretch; gap: 22px; }
+  .theme-row .screen-copy h3 { max-width: none; }
   .workflow-intro { margin-bottom: 36px; }
   .screen-list { gap: 58px; }
   .screen-row, .screen-row-reverse { display: flex; flex-direction: column; align-items: stretch; gap: 18px; }
