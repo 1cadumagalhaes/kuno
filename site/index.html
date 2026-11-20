@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f8f9fb">
+    <meta name="description" content="Kuno é uma interface de terminal para Kubernetes feita para o teclado: encontre recursos, acompanhe logs e inspecione manifestos e eventos.">
+    <title>Kuno: Kubernetes a uma tecla de distância</title>
+    <link rel="icon" type="image/svg+xml" href="./assets/kuno-mark.svg">
+    <link rel="canonical" href="https://cadumagalhaes.dev/kuno/">
+    <link rel="alternate" hreflang="pt-BR" href="https://cadumagalhaes.dev/kuno/">
+    <link rel="alternate" hreflang="en" href="https://cadumagalhaes.dev/kuno/en/">
+    <link rel="alternate" hreflang="x-default" href="https://cadumagalhaes.dev/kuno/">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Kuno">
+    <meta property="og:locale" content="pt_BR">
+    <meta property="og:locale:alternate" content="en">
+    <meta property="og:title" content="Kuno: Kubernetes a uma tecla de distância">
+    <meta property="og:description" content="Kuno é uma interface de terminal para Kubernetes feita para o teclado: encontre recursos, acompanhe logs e inspecione manifestos e eventos.">
+    <meta property="og:url" content="https://cadumagalhaes.dev/kuno/">
+    <meta property="og:image" content="https://cadumagalhaes.dev/kuno/assets/og-pt.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="Cartão do Kuno com a frase Seu cluster. Uma tecla. e uma captura da lista de pods no terminal">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Kuno: Kubernetes a uma tecla de distância">
+    <meta name="twitter:description" content="Interface de terminal para Kubernetes, feita para o teclado.">
+    <meta name="twitter:image" content="https://cadumagalhaes.dev/kuno/assets/og-pt.png">
+    <link rel="stylesheet" href="./styles.css">
+    <script>
+      window.KUNO_I18N = {
+        filterPods: "Filtrar pods",
+        filterLogs: "Filtrar logs",
+        search: (view) => `Buscar ${view}`,
+        noRows: "Nenhum pod corresponde a esse filtro.",
+        noSelection: "Nenhum pod corresponde a esse filtro.",
+        openPod: "Pressione <kbd>Enter</kbd> para abrir os containers deste pod.",
+        readyPod: "O container <code>web</code> está pronto. Pressione <kbd>Esc</kbd> para voltar.",
+        pods: (count) => `${count} ${count === 1 ? "pod" : "pods"}`,
+        logs: (count, mode) => `${count} ${count === 1 ? "linha" : "linhas"} · modo ${mode}`,
+        emptyLogs: "Nenhuma linha de log corresponde a esse filtro.",
+        yaml: "pod/storefront-7d9f · YAML",
+        events: (count) => `${count} eventos · storefront`,
+        help: "guia de teclado",
+        container: (name) => `container/web · ${name}`,
+        unknown: (command) => `Comando de demo desconhecido: ${command || "(vazio)"}`,
+        copied: "Copiado.",
+        copyFallback: "Selecione e copie o comando.",
+        viewLabels: { pods: "pods", logs: "logs", yaml: "yaml", events: "eventos" },
+        expandImage: "Ampliar imagem",
+        closeImage: "Fechar imagem",
+        helpText: `NAVEGAÇÃO
+  j / ↓       Descer
+  k / ↑       Subir
+  Enter       Abrir o pod selecionado
+
+AÇÕES
+  l           Abrir logs
+  m           Alternar logs raw / pretty
+  y           Ver YAML
+  Ctrl+E      Ver eventos
+  :logs       Usar a barra de comando
+
+Pressione Esc ou escolha uma aba para voltar.`,
+      };
+    </script>
+    <script src="./demo.js" defer></script>
+    <script src="./lightbox.js" defer></script>
+  </head>
+  <body>
+    <header class="site-header page-frame">
+      <a class="brand" href="#top" aria-label="Kuno, início">
+        <img src="./assets/kuno-mark.svg" alt="" width="36" height="36">
+        <span>Kuno</span>
+      </a>
+      <nav aria-label="Navegação principal">
+        <a class="nav-section" href="#workflow">Por que Kuno</a>
+        <a class="nav-section" href="#demo">Demo</a>
+        <a class="nav-github" href="https://github.com/1cadumagalhaes/kuno">
+          <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+          <span>GitHub</span>
+        </a>
+        <a class="lang-switch" href="./en/" hreflang="en" lang="en" aria-label="Read this page in English">EN</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero page-frame" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <h1 id="hero-title">Seu cluster.<span class="hero-shot"><img src="./assets/screens/pods.svg" alt="Kuno mostrando uma lista de pods do Kubernetes com um recurso selecionado" width="1458" height="928"></span> Uma tecla.</h1>
+          <p>O Kuno é uma interface de terminal para Kubernetes feita para o teclado. Encontre um recurso, acompanhe os logs e inspecione o que importa sem sair do terminal.</p>
+          <div class="hero-install">
+            <div class="install-command">
+              <code>uv tool install kuno</code>
+              <button type="button" id="copy-install" aria-label="Copiar o comando de instalação">Copiar</button>
+            </div>
+            <p class="copy-status" id="copy-status" aria-live="polite"></p>
+            <p class="hero-install-note">Depois é só rodar <code>kuno</code> no terminal, com um kubeconfig à mão.</p>
+          </div>
+        </div>
+        <div class="hero-mark" aria-hidden="true">
+          <svg viewBox="0 0 240 240" role="presentation">
+            <path d="M75 34v172M75 120l98-70M75 120l98 70" />
+            <circle cx="75" cy="34" r="11" />
+            <circle cx="75" cy="120" r="13" class="current-node" />
+            <circle cx="75" cy="206" r="11" />
+            <circle cx="173" cy="50" r="11" />
+            <circle cx="173" cy="190" r="11" />
+          </svg>
+        </div>
+      </section>
+
+      <section class="demo-section page-frame" id="demo" aria-labelledby="demo-title">
+        <div class="section-intro">
+          <h2 id="demo-title">Dê uma volta.</h2>
+          <p>Uma prévia pequena, só local. Use <kbd>j</kbd>/<kbd>k</kbd> ou as setas, pressione <kbd>Enter</kbd> ou troque de aba. O cluster de exemplo é fictício; nada se conecta ao Kubernetes.</p>
+        </div>
+        <div class="demo-shell" data-ui="kuno-terminal">
+          <div class="demo-topline">
+            <div class="demo-brand"><img src="./assets/kuno-mark.svg" alt="" width="22" height="22"><span>Kuno</span></div>
+            <span class="demo-scope">demo-cluster <span aria-hidden="true">/</span> storefront</span>
+            <span class="connection-state"><span class="state-dot"></span> demo local</span>
+          </div>
+          <div class="demo-breadcrumb" aria-label="Local atual"><span>namespaces</span><b>/</b><span>storefront</span><b>/</b><strong id="demo-crumb">pods</strong></div>
+          <div class="demo-toolbar">
+            <div class="demo-tabs" role="group" aria-label="Escolha uma aba do demo">
+              <button type="button" class="demo-tab is-active" data-view="pods" aria-pressed="true">Pods</button>
+              <button type="button" class="demo-tab" data-view="logs" aria-pressed="false">Logs</button>
+              <button type="button" class="demo-tab" data-view="yaml" aria-pressed="false">YAML</button>
+              <button type="button" class="demo-tab" data-view="events" aria-pressed="false">Eventos</button>
+            </div>
+            <label class="demo-filter"><span class="visually-hidden">Filtrar recursos do demo</span><span aria-hidden="true">/</span><input id="demo-filter" type="search" placeholder="Filtrar pods" autocomplete="off"></label>
+          </div>
+          <div class="demo-content">
+            <div class="demo-main" id="demo-main" tabindex="0" aria-label="Demo interativo do Kuno. Use as setas ou j e k para navegar.">
+              <div class="demo-table-heading" aria-hidden="true"><span>NAME</span><span>READY</span><span>STATUS</span><span>RESTARTS</span><span>AGE</span></div>
+              <div id="demo-rows" class="demo-rows" role="group" aria-label="Pods no namespace storefront"></div>
+              <pre id="demo-output" class="demo-output" hidden></pre>
+              <div class="log-panel" id="log-panel" hidden>
+                <div class="log-modes" role="group" aria-label="Modo de exibição dos logs">
+                  <button type="button" class="log-mode is-active" data-mode="raw" aria-pressed="true">raw</button>
+                  <button type="button" class="log-mode" data-mode="pretty" aria-pressed="false">pretty</button>
+                </div>
+                <div class="log-output" id="log-output"></div>
+              </div>
+            </div>
+            <aside class="demo-info" id="demo-info">
+              <h3>Info do pod</h3>
+              <dl>
+                <div><dt>Nome</dt><dd id="info-name">storefront-7d9f</dd></div>
+                <div><dt>Namespace</dt><dd>storefront</dd></div>
+                <div><dt>Node</dt><dd>node-a</dd></div>
+                <div><dt>CPU</dt><dd id="info-cpu">24m</dd></div>
+                <div><dt>Memória</dt><dd id="info-memory">48Mi</dd></div>
+              </dl>
+              <p id="info-note">Pressione <kbd>Enter</kbd> para abrir os containers deste pod.</p>
+            </aside>
+          </div>
+          <div class="demo-footer">
+            <div class="demo-hint"><kbd>j</kbd><kbd>k</kbd> navegar <kbd>Enter</kbd> abrir <kbd>l</kbd> logs <kbd>m</kbd> modo <kbd>y</kbd> YAML <kbd>?</kbd> ajuda</div>
+            <span id="demo-status" aria-live="polite">4 pods</span>
+          </div>
+          <div class="demo-command" id="demo-command" hidden>
+            <label for="demo-command-input">:</label>
+            <input id="demo-command-input" type="text" placeholder="tente logs, yaml, events, pods" autocomplete="off">
+          </div>
+        </div>
+        <p class="demo-caption">Este é um mock no navegador, com dados fictícios: não é um cluster real. <button id="reset-demo" type="button">Redefinir demo</button></p>
+      </section>
+
+      <section class="workflow page-frame" id="workflow" aria-labelledby="workflow-title">
+        <div class="section-intro workflow-intro">
+          <h2 id="workflow-title">Por que Kuno</h2>
+          <p>Percorra os detalhes de Kubernetes que você mais usa, sem trocar de ferramenta nem perder o lugar.</p>
+        </div>
+        <div class="screen-list">
+          <article class="screen-row">
+            <div class="screen-copy">
+              <h3>Escolha um pod.</h3>
+              <p>Navegue por pods e workloads, mova com <kbd>j</kbd>/<kbd>k</kbd> e abra o recurso selecionado com <kbd>Enter</kbd>.</p>
+            </div>
+            <figure class="screen-shot"><img src="./assets/screens/pod-details.svg" alt="Explorador de pods do Kuno com um recurso selecionado e seu painel de informações" width="1458" height="928" loading="lazy"><figcaption>Explorador de pods · detalhes do recurso selecionado</figcaption></figure>
+          </article>
+          <article class="log-feature">
+            <div class="log-feature-copy">
+              <h3>Acompanhe os logs.</h3>
+              <p>Abra os logs de um pod ou workload, filtre a saída e siga as linhas novas no mesmo fluxo de teclado. A tecla <kbd>m</kbd> alterna entre o log cru e o formatado: se a linha é JSON, o Kuno separa timestamp, nível, categoria e campos; se não é, passa intacta.</p>
+            </div>
+            <div class="log-compare">
+              <figure class="log-strip"><img src="./assets/screens/logs-raw.svg" alt="Logs do Kuno no modo raw, com as linhas JSON exatamente como o container emitiu" width="1458" height="928" loading="lazy"><figcaption><b>raw</b> · do jeito que o container emitiu</figcaption></figure>
+              <figure class="log-strip"><img src="./assets/screens/logs-pretty.svg" alt="Os mesmos logs no modo pretty, com timestamp, nível, categoria e campos separados" width="1458" height="928" loading="lazy"><figcaption><b>pretty</b> · JSON virou uma linha legível</figcaption></figure>
+            </div>
+          </article>
+          <article class="screen-row">
+            <div class="screen-copy">
+              <h3>Inspecione um manifesto.</h3>
+              <p>Leia um manifesto, veja os eventos ou abra o describe quando um recurso pedir uma olhada mais de perto.</p>
+            </div>
+            <div class="screen-pair">
+              <figure class="screen-shot"><img src="./assets/screens/manifest.svg" alt="Visualizador de YAML do Kuno com a definição de um pod" width="1458" height="928" loading="lazy"><figcaption>YAML · inspecionar um manifesto</figcaption></figure>
+              <figure class="screen-shot"><img src="./assets/screens/events.svg" alt="View de eventos do Kuno mostrando eventos normais e de alerta" width="1458" height="928" loading="lazy"><figcaption>Eventos · veja o que mudou</figcaption></figure>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="project-band page-frame" id="project" aria-labelledby="project-title">
+        <div>
+          <h2 id="project-title">Pacote, código e docs.</h2>
+          <p>O Kuno é open source, sob licença Apache-2.0. O pacote fica no PyPI e o código no GitHub.</p>
+        </div>
+        <div class="project-links">
+          <div class="badge-row">
+            <a href="https://pypi.org/project/kuno/"><img src="https://img.shields.io/pypi/v/kuno?style=flat-square&amp;label=pypi&amp;color=2458d3&amp;labelColor=111827" alt="Versão do Kuno no PyPI" width="78" height="20"></a>
+            <a href="https://pypi.org/project/kuno/"><img src="https://img.shields.io/pypi/pyversions/kuno?style=flat-square&amp;color=2458d3&amp;labelColor=111827" alt="Versões de Python suportadas" width="198" height="20"></a>
+            <a href="https://github.com/1cadumagalhaes/kuno/blob/main/LICENSE"><img src="https://img.shields.io/pypi/l/kuno?style=flat-square&amp;color=2458d3&amp;labelColor=111827" alt="Licença do Kuno" width="120" height="20"></a>
+          </div>
+          <p class="project-nav">
+            <a href="https://github.com/1cadumagalhaes/kuno#readme">Ler o README</a>
+            <a href="https://github.com/1cadumagalhaes/kuno">Ver no GitHub</a>
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer page-frame">
+      <a class="brand" href="#top"><img src="./assets/kuno-mark.svg" alt="" width="32" height="32"><span>Kuno</span></a>
+      <p>Kubernetes open source, mais perto do terminal.</p>
+      <a href="#top">Voltar ao topo</a>
+    </footer>
+  </body>
+</html>
