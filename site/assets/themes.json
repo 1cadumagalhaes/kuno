@@ -1,0 +1,79 @@
+{
+  "nord": {
+    "name": "nord",
+    "primary": "#88C0D0",
+    "secondary": "#81A1C1",
+    "warning": "#EBCB8B",
+    "error": "#BF616A",
+    "success": "#A3BE8C",
+    "accent": "#B48EAD",
+    "foreground": "#D8DEE9",
+    "background": "#2E3440",
+    "surface": "#3B4252",
+    "panel": "#434C5E",
+    "dark": true,
+    "variables": {
+      "block-cursor-background": "#88C0D0",
+      "block-cursor-foreground": "#2E3440",
+      "block-cursor-text-style": "none",
+      "footer-key-foreground": "#88C0D0",
+      "input-selection-background": "#81a1c1 35%",
+      "button-color-foreground": "#2E3440",
+      "button-focus-text-style": "reverse"
+    }
+  },
+  "dracula": {
+    "name": "dracula",
+    "primary": "#BD93F9",
+    "secondary": "#6272A4",
+    "warning": "#FFB86C",
+    "error": "#FF5555",
+    "success": "#50FA7B",
+    "accent": "#FF79C6",
+    "foreground": "#F8F8F2",
+    "background": "#282A36",
+    "surface": "#2B2E3B",
+    "panel": "#313442",
+    "dark": true,
+    "variables": {
+      "button-color-foreground": "#282A36"
+    }
+  },
+  "catppuccin-latte": {
+    "name": "catppuccin-latte",
+    "primary": "#8839EF",
+    "secondary": "#DC8A78",
+    "warning": "#DF8E1D",
+    "error": "#D20F39",
+    "success": "#40A02B",
+    "accent": "#FE640B",
+    "foreground": "#4C4F69",
+    "background": "#EFF1F5",
+    "surface": "#E6E9EF",
+    "panel": "#CCD0DA",
+    "dark": false,
+    "variables": {
+      "button-color-foreground": "#EFF1F5"
+    }
+  },
+  "solarized-light": {
+    "name": "solarized-light",
+    "primary": "#268bd2",
+    "secondary": "#2aa198",
+    "warning": "#cb4b16",
+    "error": "#dc322f",
+    "success": "#859900",
+    "accent": "#6c71c4",
+    "foreground": "#586e75",
+    "background": "#fdf6e3",
+    "surface": "#eee8d5",
+    "panel": "#eee8d5",
+    "dark": false,
+    "variables": {
+      "button-color-foreground": "#fdf6e3",
+      "footer-background": "#268bd2",
+      "footer-key-foreground": "#fdf6e3",
+      "footer-description-foreground": "#fdf6e3"
+    }
+  }
+}

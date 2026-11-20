@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-labelledby="title">
+  <title id="title">Kuno resource-tree mark</title>
+  <g fill="none" stroke="#111827" stroke-linecap="round" stroke-linejoin="round" stroke-width="3.2">
+    <path d="M15 7v34M15 24l19-14M15 24l19 14"/>
+    <circle cx="15" cy="7" r="3.3" fill="#f7f8fb"/>
+    <circle cx="15" cy="24" r="4" fill="#2458d3" stroke="#2458d3"/>
+    <circle cx="15" cy="41" r="3.3" fill="#f7f8fb"/>
+    <circle cx="34" cy="10" r="3.3" fill="#f7f8fb"/>
+    <circle cx="34" cy="38" r="3.3" fill="#f7f8fb"/>
+  </g>
+</svg>

@@ -1,0 +1,20 @@
+# Kuno
+
+> Kuno is a keyboard-first terminal UI for Kubernetes: find a resource, follow its logs, and inspect manifests and events without leaving the terminal. The landing page shows real terminal screens and a browser-local demo that never contacts a cluster.
+
+## Install
+
+- [PyPI package](https://pypi.org/project/kuno/): published versions, supported Pythons (3.11+), Apache-2.0 license. Install with `uv tool install kuno`, then run `kuno` with a kubeconfig available.
+- [README](https://github.com/1cadumagalhaes/kuno#readme): requirements, installation, keybindings, configuration.
+
+## Product
+
+- [Landing page](https://cadumagalhaes.dev/kuno/): what the UI does, screenshots of the pod explorer, logs, YAML and events views, and the interactive demo.
+- [English landing page](https://cadumagalhaes.dev/kuno/en/)
+- [Changelog](https://github.com/1cadumagalhaes/kuno/blob/main/CHANGELOG.md)
+- [Source](https://github.com/1cadumagalhaes/kuno)
+
+## Notes
+
+- The demo, and the sample data in the screenshots, is fictional; nothing on the landing page reads kubeconfig or talks to a cluster.
+- Logs have two modes: raw (as emitted) and structured, which turns JSON lines into `timestamp LEVEL category message key=value`.
