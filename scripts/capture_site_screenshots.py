@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import re
 from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
+
+from textual.widgets import Static
 
 from kuno.app import EventsScreen, KunoApp, LogsScreen, ManifestScreen
 from kuno.config import KunoConfig
@@ -14,6 +18,9 @@ from kuno.models import EventSummary, PodSource, PodSummary, StartupConfig
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "site" / "assets" / "screens"
+THEME_OUTPUT = ROOT / "site" / "assets" / "themes.json"
+THEME_NAMES = ("nord", "dracula", "catppuccin-latte", "solarized-light")
+FIXED_STATUS = "\u2b22 kuno \u2502 ctx: demo-cluster \u2502 ns: storefront \u2502 09:41"
 
 PODS = [
     PodSummary("storefront-7d9f", "1/1", "Running", 0, "12m", "web", "24m", "48Mi"),
@@ -107,6 +114,16 @@ async def read_logs(*args: object, **kwargs: object) -> str:
     return LOGS
 
 
+def _pin_status(app: KunoApp) -> None:
+    app.query_one("#status-line", Static).update(FIXED_STATUS)
+
+
+def save_screenshot(app: KunoApp, path: Path) -> None:
+    app.save_screenshot(path)
+    svg = path.read_text(encoding="utf-8")
+    path.write_text(re.sub(r"terminal-\d+", "terminal-kuno", svg), encoding="utf-8")
+
+
 def patches() -> ExitStack:
     stack = ExitStack()
     stack.enter_context(
@@ -119,7 +136,48 @@ def patches() -> ExitStack:
     stack.enter_context(patch("kuno.app.read_pod_logs", new=read_logs))
     stack.enter_context(patch.object(LogsScreen, "_start_streaming", lambda self: None))
     stack.enter_context(patch("kuno.app.save_config", lambda config: None))
+    # The status line prints the wall clock; pin both formatters so reruns are
+    # byte-identical. The explorer screen updates its own status inside a method.
+    stack.enter_context(patch("kuno.app._format_status_text", lambda app: FIXED_STATUS))
+    stack.enter_context(
+        patch.object(KunoApp, "_update_status_line", lambda self: _pin_status(self))
+    )
     return stack
+
+
+async def capture_theme_demos() -> None:
+    themes = {}
+    for theme_name in THEME_NAMES:
+        config = KunoConfig(path=ROOT / "site" / ".demo-config.toml", theme=theme_name)
+        app = KunoApp(
+            StartupConfig(context="demo-cluster", namespace="storefront"), config, show_splash=False
+        )
+        with patches():
+            async with app.run_test(size=(118, 36)) as pilot:
+                await pilot.pause(0.2)
+                save_screenshot(app, OUTPUT / f"pods-{theme_name}.svg")
+                theme = app.get_theme(theme_name)
+                themes[theme_name] = {
+                    key: value
+                    for key, value in vars(theme).items()
+                    if key
+                    in {
+                        "name",
+                        "primary",
+                        "secondary",
+                        "accent",
+                        "foreground",
+                        "background",
+                        "surface",
+                        "panel",
+                        "success",
+                        "warning",
+                        "error",
+                        "dark",
+                        "variables",
+                    }
+                }
+    THEME_OUTPUT.write_text(json.dumps(themes, indent=2) + "\n", encoding="utf-8")
 
 
 async def capture() -> None:
@@ -132,23 +190,23 @@ async def capture() -> None:
     with patches():
         async with app.run_test(size=(118, 36)) as pilot:
             await pilot.pause(0.2)
-            app.save_screenshot(OUTPUT / "pods.svg")
+            save_screenshot(app, OUTPUT / "pods.svg")
 
             app.action_toggle_info()
             await pilot.pause()
-            app.save_screenshot(OUTPUT / "pod-details.svg")
+            save_screenshot(app, OUTPUT / "pod-details.svg")
 
             app.push_screen(
                 ManifestScreen(yaml_content=MANIFEST, resource_name="pod/storefront-7d9f")
             )
-            await pilot.pause(0.2)
-            app.save_screenshot(OUTPUT / "manifest.svg")
+            await pilot.pause(0.5)
+            save_screenshot(app, OUTPUT / "manifest.svg")
             await pilot.press("escape")
             await pilot.pause()
 
             app.push_screen(EventsScreen(events=EVENTS, title="Events — storefront"))
-            await pilot.pause(0.2)
-            app.save_screenshot(OUTPUT / "events.svg")
+            await pilot.pause(0.5)
+            save_screenshot(app, OUTPUT / "events.svg")
             await pilot.press("escape")
             await pilot.pause()
 
@@ -165,12 +223,14 @@ async def capture() -> None:
             # to the same rows; following would scroll wrapped JSON out of frame.
             app.screen.query_one("#logs-output", LogView).scroll_home(animate=False)
             await pilot.pause(0.2)
-            app.save_screenshot(OUTPUT / "logs-raw.svg")
+            save_screenshot(app, OUTPUT / "logs-raw.svg")
             app.screen.action_cycle_mode()
             await pilot.pause(0.3)
             app.screen.query_one("#logs-output", LogView).scroll_home(animate=False)
             await pilot.pause(0.2)
-            app.save_screenshot(OUTPUT / "logs-pretty.svg")
+            save_screenshot(app, OUTPUT / "logs-pretty.svg")
+
+    await capture_theme_demos()
 
 
 if __name__ == "__main__":
