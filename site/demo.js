@@ -43,6 +43,10 @@ const events = [
 ];
 
 const english = {
+  themeSwitchLabel: "Choose a terminal theme",
+  themeImageAlt: (name) => `Kuno pod explorer in the ${name} theme`,
+  themeCaption: (name) => `App capture · ${name}`,
+  chooseTheme: "Show theme",
   filterPods: "Filter pods",
   filterLogs: "Filter logs",
   search: (view) => `Search ${view}`,
@@ -65,6 +69,8 @@ const english = {
 };
 const t = Object.assign({}, english, window.KUNO_I18N || {});
 
+const siteScript = document.currentScript;
+const siteAssets = new URL("assets/", siteScript.src);
 const demo = document.querySelector("#demo-main");
 const rows = document.querySelector("#demo-rows");
 const output = document.querySelector("#demo-output");
@@ -391,3 +397,57 @@ document.querySelectorAll(".badge-row img").forEach((badge) => {
 });
 
 render();
+
+const themeSwitcher = document.querySelector(".theme-switcher");
+if (themeSwitcher) {
+  const themeButtons = [...themeSwitcher.querySelectorAll("[data-theme]")];
+  const themeImage = document.querySelector("#theme-image");
+  const themeCaption = document.querySelector("#theme-caption");
+  themeSwitcher.setAttribute("aria-label", t.themeSwitchLabel);
+
+  function selectTheme(name, themes) {
+    const palette = themes[name];
+    if (!palette) return;
+    const colors = {
+      "--terminal": palette.background,
+      "--terminal-background": palette.background,
+      "--terminal-raised": palette.surface,
+      "--terminal-line": palette.panel,
+      "--terminal-ink": palette.foreground,
+      "--terminal-muted": palette.foreground,
+      "--terminal-blue": palette.primary,
+      "--terminal-green": palette.success,
+      "--terminal-warning": palette.warning,
+      "--terminal-red": palette.error,
+      "--terminal-secondary": palette.secondary,
+      "--terminal-accent": palette.accent,
+    };
+    const shell = document.querySelector(".demo-shell");
+    Object.entries(colors).forEach(([property, value]) => shell.style.setProperty(property, value));
+    shell.dataset.theme = name;
+    shell.classList.toggle("is-light", palette.dark === false);
+    themeImage.src = new URL(`screens/pods-${name}.svg`, siteAssets).href;
+    themeImage.alt = t.themeImageAlt(name);
+    themeCaption.textContent = t.themeCaption(name);
+    themeButtons.forEach((button) => {
+      const active = button.dataset.theme === name;
+      button.setAttribute("aria-pressed", String(active));
+    });
+  }
+
+  themeButtons.forEach((button) => {
+    button.setAttribute("aria-label", `${t.chooseTheme}: ${button.dataset.theme}`);
+    button.addEventListener("click", () => selectTheme(button.dataset.theme, themePalettes));
+  });
+  let themePalettes = {};
+  fetch(new URL("themes.json", siteAssets))
+    .then((response) => {
+      if (!response.ok) throw new Error("Theme palette data could not be loaded.");
+      return response.json();
+    })
+    .then((themes) => {
+      themePalettes = themes;
+      selectTheme("nord", themes);
+    })
+    .catch((error) => console.error(error));
+}
